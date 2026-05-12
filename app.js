@@ -112,6 +112,22 @@ async function signInWithGitHub() {
   if (error) throw error;
 }
 
+async function signInWithGoogle() {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin }
+  });
+  if (error) throw error;
+}
+
+async function signInWithDiscord() {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: 'discord',
+    options: { redirectTo: window.location.origin }
+  });
+  if (error) throw error;
+}
+
 async function signInWithMagicLink(email) {
   const { error } = await supabase.auth.signInWithOtp({ email });
   if (error) throw error;
@@ -1100,6 +1116,8 @@ function startRealtime() {
 document.addEventListener('DOMContentLoaded', () => {
   // Bind auth buttons after DOM is ready
   const githubBtn = document.getElementById('github-login-btn');
+  const googleBtn = document.getElementById('google-login-btn');
+  const discordBtn = document.getElementById('discord-login-btn');
   const loginBtn = document.getElementById('login-btn');
   const signupBtn = document.getElementById('signup-btn');
   const magicLinkBtn = document.getElementById('magic-link-btn');
@@ -1108,6 +1126,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const authStatus = document.getElementById('auth-status');
 
   githubBtn?.addEventListener('click', () => signInWithGitHub());
+  googleBtn?.addEventListener('click', async () => {
+    try { await signInWithGoogle(); } catch (e) {
+      authStatus.textContent = e.message;
+      authStatus.style.display = 'block';
+    }
+  });
+  discordBtn?.addEventListener('click', async () => {
+    try { await signInWithDiscord(); } catch (e) {
+      authStatus.textContent = e.message;
+      authStatus.style.display = 'block';
+    }
+  });
   loginBtn?.addEventListener('click', async () => {
     try {
       await signIn(emailIn.value, passIn.value);
