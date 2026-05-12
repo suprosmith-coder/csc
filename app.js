@@ -104,29 +104,24 @@ async function signIn(email, password) {
   handleSession(data.session);
 }
 
-async function signInWithGitHub() {
+function getRedirectURL() {
+  // window.location.origin returns "null" for file:// — fall back to href
+  const origin = window.location.origin;
+  if (origin && origin !== 'null') return origin;
+  return window.location.href.split('?')[0].split('#')[0];
+}
+
+async function signInWithOAuth(provider) {
   const { error } = await supabase.auth.signInWithOAuth({
-    provider: 'github',
-    options: { redirectTo: window.location.origin }
+    provider,
+    options: { redirectTo: getRedirectURL() }
   });
   if (error) throw error;
 }
 
-async function signInWithGoogle() {
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: window.location.origin }
-  });
-  if (error) throw error;
-}
-
-async function signInWithDiscord() {
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: 'discord',
-    options: { redirectTo: window.location.origin }
-  });
-  if (error) throw error;
-}
+async function signInWithGitHub()  { return signInWithOAuth('github');  }
+async function signInWithGoogle()  { return signInWithOAuth('google');  }
+async function signInWithDiscord() { return signInWithOAuth('discord'); }
 
 async function signInWithMagicLink(email) {
   const { error } = await supabase.auth.signInWithOtp({ email });
@@ -1125,19 +1120,27 @@ document.addEventListener('DOMContentLoaded', () => {
   const passIn = document.getElementById('auth-password');
   const authStatus = document.getElementById('auth-status');
 
-  githubBtn?.addEventListener('click', () => signInWithGitHub());
-  googleBtn?.addEventListener('click', async () => {
-    try { await signInWithGoogle(); } catch (e) {
-      authStatus.textContent = e.message;
-      authStatus.style.display = 'block';
-    }
-  });
-  discordBtn?.addEventListener('click', async () => {
-    try { await signInWithDiscord(); } catch (e) {
-      authStatus.textContent = e.message;
-      authStatus.style.display = 'block';
-    }
-  });
+  function oauthClickHandler(btn, fn, label) {
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const orig = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span style="opacity:0.7">Connecting to ' + label + '…</span>';
+      authStatus.style.display = 'none';
+      try {
+        await fn();
+      } catch (e) {
+        authStatus.textContent = label + ' error: ' + e.message;
+        authStatus.style.display = 'block';
+        btn.disabled = false;
+        btn.innerHTML = orig;
+      }
+    });
+  }
+
+  oauthClickHandler(githubBtn,  signInWithGitHub,  'GitHub');
+  oauthClickHandler(googleBtn,  signInWithGoogle,  'Google');
+  oauthClickHandler(discordBtn, signInWithDiscord, 'Discord');
   loginBtn?.addEventListener('click', async () => {
     try {
       await signIn(emailIn.value, passIn.value);
