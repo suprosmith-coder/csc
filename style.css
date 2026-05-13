@@ -177,33 +177,10 @@ ul, ol { list-style: none; }
   background: var(--text-primary); color: var(--bg-void);
   border-radius: var(--radius-md); font-size: 15px; font-weight: 700;
   transition: var(--transition);
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 .auth-btn-github:hover { background: #fff; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
 .auth-btn-github svg { width: 20px; height: 20px; fill: var(--bg-void); }
-
-.auth-btn-google {
-  display: flex; align-items: center; justify-content: center; gap: 10px;
-  width: 100%; padding: 13px;
-  background: var(--bg-elevated); color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md); font-size: 15px; font-weight: 700;
-  transition: var(--transition);
-  margin-bottom: 8px;
-}
-.auth-btn-google:hover { background: var(--bg-float); transform: translateY(-1px); box-shadow: 0 8px 24px rgba(0,0,0,0.3); border-color: rgba(255,255,255,0.15); }
-.auth-btn-google svg { width: 20px; height: 20px; }
-
-.auth-btn-discord {
-  display: flex; align-items: center; justify-content: center; gap: 10px;
-  width: 100%; padding: 13px;
-  background: #5865F2; color: #fff;
-  border-radius: var(--radius-md); font-size: 15px; font-weight: 700;
-  transition: var(--transition);
-  margin-bottom: 12px;
-}
-.auth-btn-discord:hover { background: #4752c4; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(88,101,242,0.4); }
-.auth-btn-discord svg { width: 20px; height: 20px; }
 
 .auth-divider {
   display: flex; align-items: center; gap: 10px;
