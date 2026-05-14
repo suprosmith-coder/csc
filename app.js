@@ -358,6 +358,68 @@ create policy "Auth channel message" on channel_messages for insert with check (
 }
 
 /* ── Auth ───────────────────────────────────────────────────── */
+
+// ── Sign-in rate limiting (ported from Cyanix AI) ────────────
+// Prevents brute-force: locks out for 30 s after 5 failed attempts.
+let _signInAttempts  = 0;
+let _signInLockUntil = 0;
+const _SIGNIN_MAX    = 5;
+const _SIGNIN_LOCK   = 30_000;
+
+function checkSignInRateLimit() {
+  if (Date.now() < _signInLockUntil) {
+    const secs = Math.ceil((_signInLockUntil - Date.now()) / 1000);
+    setAuthStatus(`Too many attempts — wait ${secs}s before trying again.`, true);
+    return false;
+  }
+  _signInAttempts++;
+  if (_signInAttempts >= _SIGNIN_MAX) {
+    _signInLockUntil = Date.now() + _SIGNIN_LOCK;
+    _signInAttempts  = 0;
+    setAuthStatus('Too many failed attempts. Locked for 30 seconds.', true);
+    return false;
+  }
+  return true;
+}
+function resetSignInRateLimit() { _signInAttempts = 0; _signInLockUntil = 0; }
+
+// ── Session expiry warning (ported from Cyanix AI) ───────────
+// Warns the user 5 min before their JWT expires and offers
+// a silent refresh. Supabase auto-refreshes every ~55 min but
+// this catches backgrounded-tab / network-outage edge cases.
+let _expiryWarningTimer = null;
+
+function scheduleSessionExpiryWarning(session) {
+  if (_expiryWarningTimer) clearTimeout(_expiryWarningTimer);
+  if (!session?.expires_at) return;
+  const warnInMs = (session.expires_at * 1000) - Date.now() - 5 * 60 * 1000;
+  if (warnInMs <= 0) return;
+  _expiryWarningTimer = setTimeout(() => showSessionExpiryBanner(), warnInMs);
+}
+
+function showSessionExpiryBanner() {
+  // Reuse the auth-status element as a non-blocking in-app banner
+  const banner = document.getElementById('session-expiry-banner');
+  if (banner) { banner.style.display = 'flex'; return; }
+  // Fallback: inject a minimal banner if the element doesn't exist in HTML
+  const b = document.createElement('div');
+  b.id = 'session-expiry-banner';
+  b.style.cssText = 'position:fixed;bottom:72px;left:50%;transform:translateX(-50%);background:var(--bg-surface,#1e1e2e);border:1px solid var(--border,#333);border-radius:12px;padding:10px 16px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-primary,#fff);z-index:9999;box-shadow:0 4px 20px #0006';
+  b.innerHTML = '<i class="fa-solid fa-clock" style="color:var(--amber,#fbbf24)"></i><span>Your session expires soon.</span><button id="session-refresh-btn" style="margin-left:8px;padding:4px 10px;border-radius:6px;background:var(--brand,#63d9ff);color:#000;border:none;cursor:pointer;font-size:12px;font-weight:600">Stay signed in</button><button onclick="this.closest(\'#session-expiry-banner\').style.display=\'none\'" style="background:none;border:none;color:var(--text-muted,#888);cursor:pointer;font-size:16px;line-height:1;margin-left:4px">×</button>';
+  document.body.appendChild(b);
+  b.querySelector('#session-refresh-btn').addEventListener('click', async () => {
+    try {
+      const { data, error } = await sb.auth.refreshSession();
+      if (error) throw error;
+      b.style.display = 'none';
+      scheduleSessionExpiryWarning(data.session);
+      toast('Session refreshed!', 'check');
+    } catch (e) {
+      toast('Could not refresh — please sign in again.', 'circle-exclamation');
+    }
+  });
+}
+
 async function initAuth() {
   const screen     = $('#auth-screen');
   const app        = $('#app');
@@ -386,7 +448,7 @@ async function initAuth() {
     if (span) span.textContent = text;
   }
 
-  // GitHub OAuth
+  // ── GitHub OAuth ─────────────────────────────────────────────
   githubBtn.addEventListener('click', async () => {
     setOAuthBtnLoading(githubBtn, 'Connecting…');
     const { error } = await sb.auth.signInWithOAuth({
@@ -397,23 +459,32 @@ async function initAuth() {
       setAuthStatus('GitHub sign-in failed: ' + error.message, true);
       resetOAuthBtn(githubBtn, 'Continue with GitHub');
     }
+    // On success the browser is redirected — no further JS runs here.
   });
 
-  // Google OAuth
+  // ── Google OAuth ─────────────────────────────────────────────
+  // access_type:'offline' + prompt:'consent' ensures a refresh_token
+  // is issued even on re-auth, which Supabase needs for silent renewal.
+  // (Ported from Cyanix AI signInOAuth('google'))
   googleBtn.addEventListener('click', async () => {
     setOAuthBtnLoading(googleBtn, 'Connecting…');
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.DEVIT_CONFIG.SITE_URL }
+      options: {
+        redirectTo: window.DEVIT_CONFIG.SITE_URL,
+        queryParams: { access_type: 'offline', prompt: 'consent' },
+      }
     });
     if (error) {
       setAuthStatus('Google sign-in failed: ' + error.message, true);
       resetOAuthBtn(googleBtn, 'Continue with Google');
     }
+    // On success the browser is redirected — no further JS runs here.
   });
 
-  // Email sign-in
+  // ── Email sign-in (with rate limiting) ───────────────────────
   loginBtn.addEventListener('click', async () => {
+    if (!checkSignInRateLimit()) return;
     const email = getSignInEmail();
     const pass  = getSignInPass();
     if (!email) { setAuthStatus('Please enter your email address', true); return; }
@@ -425,10 +496,13 @@ async function initAuth() {
       setAuthStatus(error.message, true);
       loginBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Sign In';
       loginBtn.disabled = false;
+    } else {
+      resetSignInRateLimit(); // success — clear attempt counter
+      // onAuthStateChange SIGNED_IN fires → onSignedIn() handles the rest
     }
   });
 
-  // Email sign-up
+  // ── Email sign-up ────────────────────────────────────────────
   signupBtn.addEventListener('click', async () => {
     const email = getSignUpEmail();
     const pass  = getSignUpPass();
@@ -445,13 +519,15 @@ async function initAuth() {
     if (error) {
       setAuthStatus(error.message, true);
     } else {
-      setAuthStatus('<i class="fa-solid fa-envelope" style="margin-right:6px"></i>Check your email to confirm your account!');
+      // Show email verification banner (ported from Cyanix AI)
+      setAuthStatus('<i class="fa-solid fa-envelope" style="margin-right:6px"></i>Check your email to confirm your account! You can resend it below if needed.');
+      showEmailVerifyBanner(email);
     }
     signupBtn.innerHTML = '<i class="fa-solid fa-user-plus"></i> Create Account';
     signupBtn.disabled = false;
   });
 
-  // Magic Link
+  // ── Magic Link ───────────────────────────────────────────────
   magicBtn.addEventListener('click', async () => {
     const email = getSignInEmail();
     if (!email) { setAuthStatus('Enter your email address first', true); return; }
@@ -470,7 +546,7 @@ async function initAuth() {
     magicBtn.disabled = false;
   });
 
-  // Forgot password
+  // ── Forgot password ──────────────────────────────────────────
   if (forgotBtn) {
     forgotBtn.addEventListener('click', async () => {
       const email = getSignInEmail();
@@ -487,68 +563,110 @@ async function initAuth() {
     });
   }
 
-  // Also allow Enter key on password fields
-  ['auth-password-si'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') loginBtn.click(); });
-  });
-  ['auth-password-su2'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') signupBtn.click(); });
-  });
+  // Enter key shortcuts
+  document.getElementById('auth-password-si')?.addEventListener('keydown', e => { if (e.key === 'Enter') loginBtn.click(); });
+  document.getElementById('auth-password-su2')?.addEventListener('keydown', e => { if (e.key === 'Enter') signupBtn.click(); });
 
-  // Auth state listener
-  // IMPORTANT: on OAuth redirect the sequence is:
-  //   1. INITIAL_SESSION fires with null (hash not yet parsed)
-  //   2. SIGNED_IN fires with the real session once hash is consumed
-  // So we must NOT reset state on a null session that follows a SIGNED_IN.
-  let appBuilt = false;
-  let signedInOnce = false; // once true, ignore null sessions from event noise
+  // ── onAuthStateChange — single source of truth ───────────────
+  //
+  // Ported from Cyanix AI with the following improvements:
+  //   • _syncPending + user-ID dedup guard (more robust than appBuilt bool)
+  //   • TOKEN_REFRESHED: reschedules expiry warning instead of ignoring
+  //   • PASSWORD_RECOVERY: surfaces the password-reset UI
+  //   • SIGNED_OUT: full state cleanup including expiry timer
+  //   • URL cleanup: covers both PKCE (?code=) and implicit (#access_token)
+  //   • Google OAuth: access_type=offline + prompt=consent for refresh token
+  let _syncPending  = false;
+  let _signedInUser = null;  // tracks user ID to prevent double-boot
+  let appBuilt      = false;
 
   sb.auth.onAuthStateChange(async (event, session) => {
-    // Ignore intermediate null-session events after we've already signed in
+
+    // ── TOKEN_REFRESHED ────────────────────────────────────────
+    // Supabase auto-refreshes the JWT every ~55 min. When it does,
+    // reschedule the expiry warning with the new expiry time.
+    // Do NOT re-run the sign-in flow — user is already in the app.
+    if (event === 'TOKEN_REFRESHED') {
+      if (session) scheduleSessionExpiryWarning(session);
+      return;
+    }
+
+    // ── PASSWORD_RECOVERY ──────────────────────────────────────
+    // User clicked a password-reset link. session.access_token is
+    // valid and scoped to updateUser() only. Surface the reset UI.
+    if (event === 'PASSWORD_RECOVERY') {
+      setAuthStatus('<i class="fa-solid fa-key" style="margin-right:6px"></i>Enter your new password below to reset it.');
+      screen.style.display = 'flex';
+      app.classList.remove('visible');
+      // Optionally scroll to / show password field
+      document.getElementById('auth-password-si')?.focus();
+      return;
+    }
+
+    // ── SIGNED_OUT ─────────────────────────────────────────────
     if (!session?.user) {
       if (event === 'SIGNED_OUT') {
-        // Genuine sign-out
-        signedInOnce = false;
-        appBuilt = false;
-        State.user = null;
+        // Cancel expiry warning
+        if (_expiryWarningTimer) { clearTimeout(_expiryWarningTimer); _expiryWarningTimer = null; }
+        const expiryBanner = document.getElementById('session-expiry-banner');
+        if (expiryBanner) expiryBanner.style.display = 'none';
+
+        // Reset all state
+        _signedInUser = null;
+        _syncPending  = false;
+        appBuilt      = false;
+        State.user    = null;
         State.profile = null;
-        screen.style.display = 'flex';
-        screen.style.opacity = '1';
+
+        // Return to auth screen
+        screen.style.display   = 'flex';
+        screen.style.opacity   = '1';
         screen.style.transform = '';
         screen.style.transition = '';
         app.classList.remove('visible');
       }
-      // All other null-session events (INITIAL_SESSION noise, TOKEN_REFRESHED edge cases) — ignore
+      // All other null-session noise (INITIAL_SESSION before hash is parsed, etc.) — ignore
       return;
     }
 
-    // We have a real session
-    signedInOnce = true;
-    State.user = session.user;
+    // ── SIGNED_IN / INITIAL_SESSION ────────────────────────────
+    // Guard against double-invocation:
+    //   • _syncPending: blocks re-entry while async boot is running
+    //   • _signedInUser: blocks re-run if the same user is already booted
+    // This handles the race between getSession() and onAuthStateChange
+    // that can fire both INITIAL_SESSION and SIGNED_IN for the same session.
+    if (_syncPending) return;
+    if (_signedInUser && _signedInUser === session.user.id && appBuilt) return;
 
-    // Strip OAuth tokens from URL bar (do this early, before any async work)
-    // Handles both implicit flow (#access_token) and PKCE flow (?code=)
-    const url = new URL(window.location.href);
-    const hasOAuthHash = url.hash && (
-      url.hash.includes('access_token') ||
-      url.hash.includes('refresh_token')
-    );
-    const hasOAuthCode = url.searchParams.has('code');
-    if (hasOAuthHash || hasOAuthCode) {
-      url.hash = '';
-      url.searchParams.delete('code');
-      url.searchParams.delete('state');
-      history.replaceState(null, '', url.pathname + (url.search !== '?' ? url.search : ''));
-    }
+    _syncPending  = true;
+    State.user    = session.user;
+
+    // Clean OAuth tokens from the URL bar so back-button and
+    // copy-pasting the URL don't expose or re-trigger tokens.
+    // Handles both PKCE flow (?code=) and implicit flow (#access_token).
+    try {
+      const url = new URL(window.location.href);
+      const hasOAuthHash = url.hash && (url.hash.includes('access_token') || url.hash.includes('refresh_token'));
+      const hasOAuthCode = url.searchParams.has('code');
+      if (hasOAuthHash || hasOAuthCode) {
+        url.hash = '';
+        url.searchParams.delete('code');
+        url.searchParams.delete('state');
+        history.replaceState(null, '', url.pathname + (url.search && url.search !== '?' ? url.search : ''));
+      }
+    } catch (e) { /* non-critical */ }
+
+    // Schedule a session expiry warning 5 min before the JWT expires
+    scheduleSessionExpiryWarning(session);
 
     await ensureProfile(session.user);
 
+    _signedInUser = session.user.id;
+
     if (!appBuilt) {
       appBuilt = true;
-      screen.style.opacity = '0';
-      screen.style.transform = 'scale(1.02)';
+      screen.style.opacity    = '0';
+      screen.style.transform  = 'scale(1.02)';
       screen.style.transition = '0.4s ease';
       setTimeout(() => {
         screen.style.display = 'none';
@@ -558,15 +676,37 @@ async function initAuth() {
         toast(`Welcome${event === 'SIGNED_IN' ? '' : ' back'}, ${firstName}!`, 'rocket');
       }, 400);
     }
+
+    _syncPending = false;
   });
 
-  // Eagerly check for an existing session on page load.
-  // On OAuth redirect the hash is present — getSession() parses it and
-  // triggers onAuthStateChange(SIGNED_IN), so we don't need to act here.
-  const { data: { session: existingSession } } = await sb.auth.getSession();
-  if (!existingSession) {
-    // No session at all — auth screen stays visible (already shown by default)
-  }
+  // ── getSession() on page load ─────────────────────────────────
+  // Resolves instantly from localStorage (no network call) for
+  // returning users. For OAuth redirects, Supabase already parsed
+  // the token via detectSessionInUrl before this runs — it fires
+  // onAuthStateChange(SIGNED_IN) automatically, so we don't act here.
+  await sb.auth.getSession();
+  // If no session exists, auth screen stays visible (shown by default in HTML).
+}
+
+// ── Email verification banner (ported from Cyanix AI) ────────
+// Shown after email sign-up until the user confirms their email.
+// OAuth users (Google/GitHub) are always auto-confirmed — skip them.
+function showEmailVerifyBanner(email) {
+  if (document.getElementById('email-verify-banner')) return;
+  const b = document.createElement('div');
+  b.id = 'email-verify-banner';
+  b.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:10px 16px;background:var(--bg-surface,#1e1e2e);border-bottom:1px solid var(--border,#333);display:flex;align-items:center;justify-content:center;gap:10px;font-size:13px;z-index:9999;flex-wrap:wrap';
+  b.innerHTML = `<i class="fa-solid fa-envelope-circle-check" style="color:var(--brand,#63d9ff)"></i><span>Confirmation sent to <strong>${email}</strong> — check your inbox.</span><button id="verify-resend-btn" style="padding:3px 10px;border-radius:6px;background:var(--brand,#63d9ff);color:#000;border:none;cursor:pointer;font-size:12px;font-weight:600">Resend</button><button onclick="document.getElementById('email-verify-banner').remove()" style="background:none;border:none;color:var(--text-muted,#888);cursor:pointer;font-size:18px;line-height:1;margin-left:4px">×</button>`;
+  document.body.appendChild(b);
+  document.getElementById('verify-resend-btn').addEventListener('click', async function() {
+    this.textContent = 'Sending…';
+    this.disabled = true;
+    const { error } = await sb.auth.resend({ type: 'signup', email });
+    if (error) toast('Failed to resend: ' + error.message, 'circle-exclamation');
+    else       toast('Confirmation email resent!', 'envelope');
+    setTimeout(() => { this.textContent = 'Resend'; this.disabled = false; }, 30_000);
+  });
 }
 
 async function ensureProfile(authUser) {
@@ -577,12 +717,15 @@ async function ensureProfile(authUser) {
     .single();
 
   if (error || !profile) {
-    // Create profile from OAuth metadata or email
+    // Create profile from OAuth metadata or email.
+    // avatar_url: GitHub uses meta.avatar_url, Google uses meta.picture.
+    // full_name: GitHub uses meta.full_name, Google uses meta.name.
+    // (Fix ported from Cyanix AI — original only handled GitHub.)
     const meta = authUser.user_metadata || {};
     const email = authUser.email || '';
     const username = (meta.user_name || meta.preferred_username || email.split('@')[0] || 'user_' + Date.now()).toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 30);
     const display_name = meta.full_name || meta.name || username;
-    const avatar_url = meta.avatar_url || null;
+    const avatar_url = meta.avatar_url || meta.picture || null; // GitHub || Google
 
     const { data: newProfile, error: createErr } = await sb
       .from('profiles')
