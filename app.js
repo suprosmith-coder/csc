@@ -1,5 +1,5 @@
 /* ============================================================
-   CYANET — Create. Collaborate. Launch.
+   DEVIT — Code. Connect. Ship.
    app.js  —  Full Supabase integration
    ============================================================ */
 
@@ -8,8 +8,8 @@
 /* ── Supabase Init ──────────────────────────────────────────── */
 const { createClient } = supabase;
 const sb = createClient(
-  window.CYANET_CONFIG.SUPABASE_URL,
-  window.CYANET_CONFIG.SUPABASE_ANON_KEY,
+  window.DEVIT_CONFIG.SUPABASE_URL,
+  window.DEVIT_CONFIG.SUPABASE_ANON_KEY,
   {
     auth: {
       detectSessionInUrl: true,   // parse #access_token hash on GitHub Pages
@@ -103,14 +103,14 @@ async function bootstrapSchema() {
   try {
     const { data, error } = await sb.from('profiles').select('id').limit(1);
     if (error && error.code === '42P01') {
-      console.warn('[Cyanet] Tables not found. Run the SQL setup in Supabase Dashboard.');
+      console.warn('[Devit] Tables not found. Run the SQL setup in Supabase Dashboard.');
       toast('⚠️ DB tables missing — see console for setup SQL', '⚠️');
       logSetupSQL();
       return false;
     }
     return true;
   } catch (e) {
-    console.error('[Cyanet] Schema check failed', e);
+    console.error('[Devit] Schema check failed', e);
     return false;
   }
 }
@@ -118,7 +118,7 @@ async function bootstrapSchema() {
 function logSetupSQL() {
   console.log(`
 /* ══════════════════════════════════════════════════════════════
-   CYANET — Run this in Supabase Dashboard > SQL Editor
+   DEVIT — Run this in Supabase Dashboard > SQL Editor
    ══════════════════════════════════════════════════════════════ */
 
 -- Helper RPC functions for atomic counter increments
@@ -367,7 +367,7 @@ async function initAuth() {
     githubBtn.disabled = true;
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'github',
-      options: { redirectTo: window.CYANET_CONFIG.SITE_URL }
+      options: { redirectTo: window.DEVIT_CONFIG.SITE_URL }
     });
     if (error) {
       setAuthStatus('GitHub login failed: ' + error.message, true);
@@ -402,7 +402,7 @@ async function initAuth() {
     signupBtn.disabled = true;
     const { error } = await sb.auth.signUp({
       email, password: pass,
-      options: { emailRedirectTo: window.CYANET_CONFIG.SITE_URL }
+      options: { emailRedirectTo: window.DEVIT_CONFIG.SITE_URL }
     });
     if (error) {
       setAuthStatus(error.message, true);
@@ -421,7 +421,7 @@ async function initAuth() {
     magicBtn.disabled = true;
     const { error } = await sb.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: window.CYANET_CONFIG.SITE_URL }
+      options: { emailRedirectTo: window.DEVIT_CONFIG.SITE_URL }
     });
     if (error) {
       setAuthStatus(error.message, true);
@@ -510,7 +510,7 @@ async function ensureProfile(authUser) {
       .single();
 
     if (createErr) {
-      console.error('[Cyanet] Failed to create profile:', createErr);
+      console.error('[Devit] Failed to create profile:', createErr);
       // Fallback profile so the app doesn't crash
       State.profile = {
         id: authUser.id,
@@ -636,8 +636,8 @@ function buildTopbar() {
   const tb = $('#topbar');
   tb.innerHTML = `
     <div class="topbar-logo">
-      <div class="topbar-logo-mark">C</div>
-      <span>Cyanet</span>
+      <img src="logo.png" alt="Devit" style="width:30px;height:30px;border-radius:8px;object-fit:cover">
+      <span>Devit</span>
     </div>
     <div class="topbar-search">
       <span class="topbar-search-icon">
@@ -2431,19 +2431,19 @@ function renderSettings(main) {
       </div>
 
       <div style="font-size:12px;color:var(--text-muted);text-align:center">
-        Cyanet v2.0 · Built with Supabase ⚡
+        Devit v1.0 · Built with Supabase ⚡
       </div>
     </div>
   `;
 
   $('#settings-edit-profile').addEventListener('click', () => openProfileEditModal(State.profile));
   $('#settings-signout').addEventListener('click', async () => {
-    if (!confirm('Sign out of Cyanet?')) return;
+    if (!confirm('Sign out of Devit?')) return;
     await sb.from('presence').update({ online: false }).eq('id', State.user.id);
     await sb.auth.signOut();
   });
   $('#settings-change-pass').addEventListener('click', async () => {
-    const { error } = await sb.auth.resetPasswordForEmail(State.user.email, { redirectTo: window.CYANET_CONFIG.SITE_URL });
+    const { error } = await sb.auth.resetPasswordForEmail(State.user.email, { redirectTo: window.DEVIT_CONFIG.SITE_URL });
     if (!error) toast('Password reset email sent! ✉️', '✉️');
     else toast('Error: ' + error.message, '❌');
   });

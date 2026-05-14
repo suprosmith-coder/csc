@@ -3,22 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Cyanet — Create. Collaborate. Launch. The social platform built for developers.">
+  <meta name="description" content="Devit — Code. Connect. Ship. The social platform built for developers.">
   <meta name="theme-color" content="#050508">
   <meta name="robots" content="index, follow">
-  <meta property="og:title" content="Cyanet — Create. Collaborate. Launch.">
+  <meta property="og:title" content="Devit — Code. Connect. Ship.">
   <meta property="og:description" content="The social platform built by developers, for developers.">
   <meta property="og:type" content="website">
-  <meta property="og:url" content="https://cyanet.dev">
+  <meta property="og:url" content="https://suprosmith-coder.github.io/csc/">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Cyanet — Create. Collaborate. Launch.">
+  <meta name="twitter:title" content="Devit — Code. Connect. Ship.">
   <meta name="twitter:description" content="The social platform built by developers, for developers.">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta http-equiv="X-Frame-Options" content="SAMEORIGIN">
   <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
-  <title>Cyanet — Create. Collaborate. Launch.</title>
+  <title>Devit — Code. Connect. Ship.</title>
   <link rel="stylesheet" href="style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2363d9ff'/><text y='24' x='4' font-size='22' font-family='system-ui' font-weight='900'>C</text></svg>">
+  <link rel="icon" href="logo.png" type="image/png">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
 <body>
@@ -27,7 +27,7 @@
     <div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;text-align:center;padding:20px">
       <div>
         <h2 style="margin-bottom:8px">JavaScript required</h2>
-        <p style="color:#888">Cyanet requires JavaScript to run. Please enable it in your browser settings.</p>
+        <p style="color:#888">Devit requires JavaScript to run. Please enable it in your browser settings.</p>
       </div>
     </div>
   </noscript>
@@ -44,10 +44,10 @@
     </div>
     <div class="auth-card">
       <div class="auth-logo">
-        <div class="auth-logo-mark">C</div>
-        <span class="auth-logo-name">Cyanet</span>
+        <img src="logo.png" alt="Devit" style="width:48px;height:48px;border-radius:12px;object-fit:cover">
+        <span class="auth-logo-name">Devit</span>
       </div>
-      <div class="auth-tagline">Create · Collaborate · Launch</div>
+      <div class="auth-tagline">Code · Connect · Ship</div>
       <h1 class="auth-heading">Welcome back</h1>
       <p class="auth-sub">The social platform built by developers, for developers.</p>
 
@@ -80,7 +80,7 @@
       <div id="auth-status" style="display:none;margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--bg-elevated);font-size:13px;color:var(--text-secondary);text-align:center"></div>
 
       <div class="auth-footer" style="margin-top:16px">
-        By continuing you agree to Cyanet's <a href="#" rel="noopener">Terms</a> and <a href="#" rel="noopener">Privacy Policy</a>
+        By continuing you agree to Devit's <a href="#" rel="noopener">Terms</a> and <a href="#" rel="noopener">Privacy Policy</a>
       </div>
     </div>
   </div>
@@ -112,7 +112,7 @@
     // NOTE: The Supabase anon key is intentionally public — it is safe to expose in client-side
     // code. Security is enforced via Row Level Security (RLS) policies in the Supabase dashboard.
     // Do NOT expose service_role keys here.
-    window.CYANET_CONFIG = {
+    window.DEVIT_CONFIG = {
       SUPABASE_URL: 'https://nynrocdgmowjgslgfdmc.supabase.co',
       SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55bnJvY2RnbW93amdzbGdmZG1jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2NTUxNTQsImV4cCI6MjA5MzIzMTE1NH0.280rrXAe92hxylzia2hl3ygRrG0LraDzBCGwQUeXu5U',
       // Must match exactly what's set in Supabase Dashboard → Authentication → URL Configuration
