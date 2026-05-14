@@ -9,7 +9,14 @@
 const { createClient } = supabase;
 const sb = createClient(
   window.CYANET_CONFIG.SUPABASE_URL,
-  window.CYANET_CONFIG.SUPABASE_ANON_KEY
+  window.CYANET_CONFIG.SUPABASE_ANON_KEY,
+  {
+    auth: {
+      detectSessionInUrl: true,   // parse #access_token hash on GitHub Pages
+      persistSession: true,
+      autoRefreshToken: true,
+    }
+  }
 );
 
 /* ── State ──────────────────────────────────────────────────── */
@@ -425,23 +432,36 @@ async function initAuth() {
     magicBtn.disabled = false;
   });
 
-  // Auth state listener — this fires on login AND on page load if session exists
+  // Auth state listener — fires on login AND on page load if session exists
+  let appBuilt = false;
   sb.auth.onAuthStateChange(async (event, session) => {
     if (session?.user) {
       State.user = session.user;
       await ensureProfile(session.user);
-      screen.style.opacity = '0';
-      screen.style.transform = 'scale(1.02)';
-      screen.style.transition = '0.4s ease';
-      setTimeout(() => {
-        screen.style.display = 'none';
-        app.classList.add('visible');
-        buildApp();
-        toast(`Welcome back, ${State.profile?.display_name?.split(' ')[0] || 'dev'}! 👋`, '🚀');
-      }, 400);
+
+      // Clean the OAuth hash from the URL bar so tokens aren't visible / bookmarked
+      if (window.location.hash.includes('access_token')) {
+        history.replaceState(null, '', window.location.pathname);
+      }
+
+      if (!appBuilt) {
+        appBuilt = true;
+        screen.style.opacity = '0';
+        screen.style.transform = 'scale(1.02)';
+        screen.style.transition = '0.4s ease';
+        setTimeout(() => {
+          screen.style.display = 'none';
+          app.classList.add('visible');
+          buildApp();
+          const firstName = State.profile?.display_name?.split(' ')[0] || 'dev';
+          const greeting = event === 'SIGNED_IN' ? `Welcome, ${firstName}! 👋` : `Welcome back, ${firstName}! 👋`;
+          toast(greeting, '🚀');
+        }, 400);
+      }
     } else {
       State.user = null;
       State.profile = null;
+      appBuilt = false;
       screen.style.display = 'flex';
       screen.style.opacity = '1';
       screen.style.transform = '';
