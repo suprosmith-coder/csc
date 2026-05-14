@@ -1,155 +1,135 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Devit</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/style.css" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Cyanet — Create. Collaborate. Launch. The social platform built for developers.">
+  <meta name="theme-color" content="#050508">
+  <meta name="robots" content="index, follow">
+  <meta property="og:title" content="Cyanet — Create. Collaborate. Launch.">
+  <meta property="og:description" content="The social platform built by developers, for developers.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://cyanet.dev">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Cyanet — Create. Collaborate. Launch.">
+  <meta name="twitter:description" content="The social platform built by developers, for developers.">
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="X-Frame-Options" content="SAMEORIGIN">
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+  <title>Cyanet — Create. Collaborate. Launch.</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2363d9ff'/><text y='24' x='4' font-size='22' font-family='system-ui' font-weight='900'>C</text></svg>">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
 <body>
 
+  <noscript>
+    <div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;text-align:center;padding:20px">
+      <div>
+        <h2 style="margin-bottom:8px">JavaScript required</h2>
+        <p style="color:#888">Cyanet requires JavaScript to run. Please enable it in your browser settings.</p>
+      </div>
+    </div>
+  </noscript>
+
+  <div class="presence-bar" id="presence-bar"></div>
+
   <!-- AUTH SCREEN -->
-  <div id="auth-screen" class="screen">
-    <div class="auth-box">
-      <div class="logo">Devit</div>
-      <p class="tagline">Where developers connect.</p>
+  <div id="auth-screen">
+    <div class="auth-bg">
+      <div class="auth-bg-grid"></div>
+      <div class="auth-bg-orb orb-1"></div>
+      <div class="auth-bg-orb orb-2"></div>
+      <div class="auth-bg-orb orb-3"></div>
+    </div>
+    <div class="auth-card">
+      <div class="auth-logo">
+        <div class="auth-logo-mark">C</div>
+        <span class="auth-logo-name">Cyanet</span>
+      </div>
+      <div class="auth-tagline">Create · Collaborate · Launch</div>
+      <h1 class="auth-heading">Welcome back</h1>
+      <p class="auth-sub">The social platform built by developers, for developers.</p>
 
-      <div id="auth-tabs" class="tabs">
-        <button class="tab active" data-tab="login">Sign In</button>
-        <button class="tab" data-tab="register">Sign Up</button>
+      <button class="auth-btn-github" id="github-login-btn">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+        </svg>
+        Continue with GitHub
+      </button>
+
+      <div class="auth-divider">or sign in with email</div>
+
+      <div class="auth-input-group">
+        <label for="auth-email">Email address</label>
+        <input type="email" id="auth-email" class="auth-input" placeholder="you@example.com" autocomplete="email">
+      </div>
+      <div class="auth-input-group">
+        <label for="auth-password">Password</label>
+        <input type="password" id="auth-password" class="auth-input" placeholder="••••••••" autocomplete="current-password">
       </div>
 
-      <form id="login-form" class="auth-form">
-        <input type="email" id="login-email" placeholder="Email" required />
-        <input type="password" id="login-password" placeholder="Password" required />
-        <button type="submit" class="btn-primary">Sign In</button>
-        <p id="login-error" class="form-error"></p>
-      </form>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <button class="auth-btn-primary" id="login-btn" style="flex:1">Sign In</button>
+        <button class="auth-btn-primary" id="signup-btn" style="flex:1;background:transparent;border:1px solid var(--border);color:var(--text-primary)">Sign Up</button>
+      </div>
+      <button class="auth-btn-primary" id="magic-link-btn" style="background:var(--violet-dim);color:var(--violet);border:1px solid rgba(167,139,250,0.3);width:100%;font-size:13px">
+        Send Magic Link instead
+      </button>
 
-      <form id="register-form" class="auth-form hidden">
-        <input type="text" id="reg-username" placeholder="Username" required />
-        <input type="email" id="reg-email" placeholder="Email" required />
-        <input type="password" id="reg-password" placeholder="Password (min 6 chars)" required />
-        <button type="submit" class="btn-primary">Create Account</button>
-        <p id="reg-error" class="form-error"></p>
-      </form>
+      <div id="auth-status" style="display:none;margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--bg-elevated);font-size:13px;color:var(--text-secondary);text-align:center"></div>
+
+      <div class="auth-footer" style="margin-top:16px">
+        By continuing you agree to Cyanet's <a href="#" rel="noopener">Terms</a> and <a href="#" rel="noopener">Privacy Policy</a>
+      </div>
     </div>
   </div>
 
-  <!-- MAIN APP -->
-  <div id="app-screen" class="screen hidden">
-
-    <!-- SIDEBAR -->
-    <aside class="sidebar">
-      <div class="sidebar-logo">Devit</div>
-      <nav class="sidebar-nav">
-        <button class="nav-btn active" data-view="feed">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-          Home
-        </button>
-        <button class="nav-btn" data-view="explore">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          Explore
-        </button>
-        <button class="nav-btn" data-view="notifications">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-          Notifications
-          <span id="notif-badge" class="badge hidden">0</span>
-        </button>
-        <button class="nav-btn" data-view="profile">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          Profile
-        </button>
-      </nav>
-      <button id="logout-btn" class="logout-btn">Sign Out</button>
-    </aside>
-
-    <!-- MAIN CONTENT -->
-    <main class="main-content">
-
-      <!-- FEED VIEW -->
-      <div id="view-feed" class="view">
-        <div class="view-header">
-          <h2>Home</h2>
-        </div>
-        <div class="compose-box">
-          <textarea id="post-content" placeholder="What's on your mind, dev?" maxlength="500"></textarea>
-          <div class="compose-footer">
-            <span id="char-count" class="char-count">500</span>
-            <button id="post-btn" class="btn-primary">Post</button>
-          </div>
-        </div>
-        <div id="feed-list" class="post-list">
-          <div class="loading">Loading posts...</div>
-        </div>
-      </div>
-
-      <!-- EXPLORE VIEW -->
-      <div id="view-explore" class="view hidden">
-        <div class="view-header">
-          <h2>Explore</h2>
-        </div>
-        <div class="search-box">
-          <input type="text" id="search-input" placeholder="Search posts or #tags..." />
-          <button id="search-btn" class="btn-primary">Search</button>
-        </div>
-        <div id="trending-tags" class="trending-section">
-          <h3>Trending Tags</h3>
-          <div id="tag-list" class="tag-list"></div>
-        </div>
-        <div id="search-results" class="post-list"></div>
-      </div>
-
-      <!-- NOTIFICATIONS VIEW -->
-      <div id="view-notifications" class="view hidden">
-        <div class="view-header">
-          <h2>Notifications</h2>
-        </div>
-        <div id="notif-list" class="notif-list">
-          <div class="loading">Loading notifications...</div>
-        </div>
-      </div>
-
-      <!-- PROFILE VIEW -->
-      <div id="view-profile" class="view hidden">
-        <div id="profile-header" class="profile-header"></div>
-        <div id="profile-tabs" class="tabs" style="margin: 0 0 0; border-bottom: 1px solid var(--border); border-radius:0; padding: 4px 16px;">
-          <button class="tab active" data-ptab="posts">Posts</button>
-          <button class="tab" data-ptab="likes">Likes</button>
-        </div>
-        <div id="profile-posts" class="post-list"></div>
-      </div>
-
-    </main>
-
-    <!-- RIGHT PANEL -->
-    <aside class="right-panel">
-      <div class="who-to-follow">
-        <h3>Who to Follow</h3>
-        <div id="suggestions-list"></div>
-      </div>
-    </aside>
-
-  </div>
-
-  <!-- POST DETAIL MODAL -->
-  <div id="post-modal" class="modal hidden">
-    <div class="modal-overlay"></div>
-    <div class="modal-box">
-      <button class="modal-close">&times;</button>
-      <div id="modal-post"></div>
-      <div class="reply-compose">
-        <textarea id="reply-content" placeholder="Post your reply..." maxlength="500"></textarea>
-        <button id="reply-btn" class="btn-primary">Reply</button>
-      </div>
-      <div id="modal-replies" class="post-list"></div>
+  <!-- APP SHELL -->
+  <div id="app">
+    <div id="topbar"></div>
+    <div class="app-body">
+      <aside id="sidebar"></aside>
+      <main id="main"></main>
+      <aside id="rightbar"></aside>
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-  <script src="/app.js"></script>
+  <!-- MODAL -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title" id="modal-title-text">New Post</span>
+        <button class="modal-close" id="modal-close-btn">&#x2715;</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script>
+    // NOTE: The Supabase anon key is intentionally public — it is safe to expose in client-side
+    // code. Security is enforced via Row Level Security (RLS) policies in the Supabase dashboard.
+    // Do NOT expose service_role keys here.
+    window.CYANET_CONFIG = {
+      SUPABASE_URL: 'https://nynrocdgmowjgslgfdmc.supabase.co',
+      SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55bnJvY2RnbW93amdzbGdmZG1jIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2NTUxNTQsImV4cCI6MjA5MzIzMTE1NH0.280rrXAe92hxylzia2hl3ygRrG0LraDzBCGwQUeXu5U',
+      SITE_URL: window.location.origin,
+    };
+  </script>
+
+  <script src="app.js"></script>
+  <script>
+    document.getElementById('modal-close-btn').addEventListener('click', () => {
+      document.getElementById('modal-overlay').classList.remove('open');
+    });
+    document.getElementById('modal-overlay').addEventListener('click', e => {
+      if (e.target === document.getElementById('modal-overlay')) {
+        document.getElementById('modal-overlay').classList.remove('open');
+      }
+    });
+  </script>
+
 </body>
 </html>
