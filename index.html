@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -175,6 +175,40 @@
     </div>
   </div>
 
+  <!-- MOBILE BOTTOM NAV -->
+  <nav id="bottom-nav" aria-label="Main navigation">
+    <div id="bottom-nav-inner">
+      <button class="bnav-btn active" data-nav="feed" aria-label="Home">
+        <i class="fa-solid fa-house"></i>
+        <span class="bnav-label">Home</span>
+        <span class="bnav-badge" id="bnav-badge-feed"></span>
+      </button>
+      <button class="bnav-btn" data-nav="explore" aria-label="Explore">
+        <i class="fa-solid fa-compass"></i>
+        <span class="bnav-label">Explore</span>
+      </button>
+      <button class="bnav-btn" data-nav="notifications" aria-label="Notifications">
+        <i class="fa-solid fa-bell"></i>
+        <span class="bnav-label">Alerts</span>
+        <span class="bnav-badge" id="bnav-badge-notifs"></span>
+      </button>
+      <button class="bnav-btn" data-nav="messages" aria-label="Messages">
+        <i class="fa-solid fa-message"></i>
+        <span class="bnav-label">Messages</span>
+        <span class="bnav-badge" id="bnav-badge-messages"></span>
+      </button>
+      <button class="bnav-btn" data-nav="profile" aria-label="Profile">
+        <i class="fa-solid fa-user"></i>
+        <span class="bnav-label">Profile</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- MOBILE FAB -->
+  <button id="mobile-fab" aria-label="New post">
+    <i class="fa-solid fa-plus"></i>
+  </button>
+
   <!-- MODAL -->
   <div class="modal-overlay" id="modal-overlay">
     <div class="modal">
@@ -187,6 +221,14 @@
   </div>
 
   <div id="toast-container"></div>
+
+  <script>
+    // Apply saved theme immediately (before render) to avoid flash
+    (function() {
+      const t = localStorage.getItem('devit-theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
 
   <script>
     window.DEVIT_CONFIG = {
@@ -206,6 +248,31 @@
       if (e.target === document.getElementById('modal-overlay')) {
         document.getElementById('modal-overlay').classList.remove('open');
       }
+    });
+
+    // Like button pop animation (delegated)
+    document.addEventListener('click', e => {
+      const btn = e.target.closest('.like-btn');
+      if (btn) {
+        btn.classList.remove('liked');
+        void btn.offsetWidth; // reflow
+        btn.classList.add('liked');
+      }
+    });
+
+    // Ripple on interactive elements
+    document.addEventListener('pointerdown', e => {
+      const el = e.target.closest('button, .sidebar-link, .bnav-btn, .post-card');
+      if (!el || el.disabled) return;
+      const rect = el.getBoundingClientRect();
+      const r = document.createElement('span');
+      r.className = 'ripple';
+      const size = Math.max(rect.width, rect.height);
+      r.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX-rect.left-size/2}px;top:${e.clientY-rect.top-size/2}px`;
+      el.style.position = el.style.position || 'relative';
+      el.style.overflow = 'hidden';
+      el.appendChild(r);
+      setTimeout(() => r.remove(), 500);
     });
 
     // Auth tab switcher

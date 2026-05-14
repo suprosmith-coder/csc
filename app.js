@@ -605,9 +605,20 @@ async function buildApp() {
   buildTopbar();
   buildSidebar();
   buildRightbar();
+  initBottomNav();
   navigateTo('feed');
   initPresenceRealtime();
   loadUnreadCounts();
+}
+
+function initBottomNav() {
+  // Wire bottom nav buttons
+  document.querySelectorAll('.bnav-btn[data-nav]').forEach(btn => {
+    btn.addEventListener('click', () => navigateTo(btn.dataset.nav));
+  });
+  // Wire FAB
+  const fab = document.getElementById('mobile-fab');
+  if (fab) fab.addEventListener('click', openNewPostModal);
 }
 
 /* ── Presence Realtime ──────────────────────────────────────── */
@@ -692,6 +703,11 @@ function updateBadges() {
   const msgBadge   = $('#nav-messages-btn .badge');
   if (notifBadge) notifBadge.style.display = State.unreadNotifs > 0 ? '' : 'none';
   if (msgBadge)   msgBadge.style.display   = State.unreadMessages > 0 ? '' : 'none';
+  // Bottom nav badges
+  const bnavNotifs = document.getElementById('bnav-badge-notifs');
+  const bnavMsgs   = document.getElementById('bnav-badge-messages');
+  if (bnavNotifs)  bnavNotifs.classList.toggle('visible', State.unreadNotifs > 0);
+  if (bnavMsgs)    bnavMsgs.classList.toggle('visible', State.unreadMessages > 0);
 }
 
 /* ── Topbar ─────────────────────────────────────────────────── */
@@ -721,6 +737,9 @@ function buildTopbar() {
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
       </button>
       <button class="topbar-action-btn" id="topbar-signout-btn" title="Sign out"><i class="fa-solid fa-power-off"></i></button>
+      <button id="theme-toggle" title="Toggle theme" aria-label="Toggle light/dark mode">
+        <i class="fa-solid fa-moon"></i>
+      </button>
       <div class="topbar-avatar" id="topbar-avatar-btn">
         ${State.profile?.avatar_url
           ? `<img src="${State.profile.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
@@ -738,6 +757,25 @@ function buildTopbar() {
     await sb.auth.signOut();
     toast('Signed out. See you soon!', 'right-from-bracket');
   });
+
+  // Theme toggle
+  const themeToggleBtn = $('#theme-toggle');
+  if (themeToggleBtn) {
+    const applyTheme = (theme) => {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('devit-theme', theme);
+      const icon = themeToggleBtn.querySelector('i');
+      if (icon) icon.className = theme === 'dark' ? 'fa-solid fa-moon' : 'fa-solid fa-sun';
+      themeToggleBtn.title = theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode';
+    };
+    // Init from saved preference
+    const savedTheme = localStorage.getItem('devit-theme') || 'dark';
+    applyTheme(savedTheme);
+    themeToggleBtn.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      applyTheme(current === 'dark' ? 'light' : 'dark');
+    });
+  }
 
   // Search with debounce
   let searchTimeout;
@@ -1022,6 +1060,7 @@ function navigateTo(view) {
   State.currentView = view;
   showPresence();
   updateSidebarActive();
+  updateBottomNavActive(view);
   const main = $('#main');
   main.innerHTML = '';
   closeSearch();
@@ -1043,6 +1082,19 @@ function navigateTo(view) {
   };
 
   (renderers[view] || renderFeed)(main);
+
+  // Page enter animation
+  main.classList.remove('page-enter');
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => { main.classList.add('page-enter'); });
+  });
+}
+
+function updateBottomNavActive(view) {
+  const btns = document.querySelectorAll('.bnav-btn');
+  btns.forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.nav === view);
+  });
 }
 
 /* ── Feed ───────────────────────────────────────────────────── */
