@@ -64,9 +64,14 @@ const avatarInitials = name => {
   return parts.length > 1 ? parts[0][0] + parts[1][0] : parts[0].slice(0,2);
 };
 
-function toast(msg, icon = '✅') {
+function toast(msg, icon = 'check') {
   const c = $('#toast-container');
-  const t = el('div', 'toast', `<span class="toast-icon">${icon}</span><span>${msg}</span>`);
+  // icon can be an FA icon name (like 'rocket') or a legacy emoji
+  const isEmoji = /\p{Emoji}/u.test(icon);
+  const iconHtml = isEmoji
+    ? `<span class="toast-icon">${icon}</span>`
+    : `<span class="toast-icon"><i class="fa-solid fa-${icon}"></i></span>`;
+  const t = el('div', 'toast', `${iconHtml}<span>${msg}</span>`);
   c.appendChild(t);
   setTimeout(() => { t.classList.add('exit'); setTimeout(() => t.remove(), 300); }, 3000);
 }
@@ -81,7 +86,7 @@ function setAuthStatus(msg, isError = false) {
   const el = $('#auth-status');
   el.style.display = 'block';
   el.style.color = isError ? 'var(--rose)' : 'var(--text-secondary)';
-  el.textContent = msg;
+  el.innerHTML = msg;
 }
 
 /* ── Avatar HTML ─────────────────────────────────────────────── */
@@ -104,7 +109,7 @@ async function bootstrapSchema() {
     const { data, error } = await sb.from('profiles').select('id').limit(1);
     if (error && error.code === '42P01') {
       console.warn('[Devit] Tables not found. Run the SQL setup in Supabase Dashboard.');
-      toast('⚠️ DB tables missing — see console for setup SQL', '⚠️');
+      toast('DB tables missing — see console for setup SQL', 'triangle-exclamation');
       logSetupSQL();
       return false;
     }
@@ -352,53 +357,84 @@ create policy "Auth channel message" on channel_messages for insert with check (
 
 /* ── Auth ───────────────────────────────────────────────────── */
 async function initAuth() {
-  const screen = $('#auth-screen');
-  const app    = $('#app');
+  const screen     = $('#auth-screen');
+  const app        = $('#app');
   const githubBtn  = $('#github-login-btn');
+  const googleBtn  = $('#google-login-btn');
   const loginBtn   = $('#login-btn');
   const signupBtn  = $('#signup-btn');
   const magicBtn   = $('#magic-link-btn');
-  const emailIn    = $('#auth-email');
-  const passIn     = $('#auth-password');
+  const forgotBtn  = $('#forgot-pw-btn');
+
+  // Helper: get active form email/password
+  const getSignInEmail = () => ($('#auth-email-si')?.value || '').trim();
+  const getSignInPass  = () => $('#auth-password-si')?.value || '';
+  const getSignUpEmail = () => ($('#auth-email-su')?.value || '').trim();
+  const getSignUpPass  = () => $('#auth-password-su')?.value || '';
+  const getSignUpPass2 = () => $('#auth-password-su2')?.value || '';
+
+  function setOAuthBtnLoading(btn, text) {
+    btn.disabled = true;
+    const span = btn.querySelector('span');
+    if (span) span.textContent = text;
+  }
+  function resetOAuthBtn(btn, text) {
+    btn.disabled = false;
+    const span = btn.querySelector('span');
+    if (span) span.textContent = text;
+  }
 
   // GitHub OAuth
   githubBtn.addEventListener('click', async () => {
-    githubBtn.textContent = 'Connecting to GitHub…';
-    githubBtn.disabled = true;
+    setOAuthBtnLoading(githubBtn, 'Connecting…');
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'github',
       options: { redirectTo: window.DEVIT_CONFIG.SITE_URL }
     });
     if (error) {
-      setAuthStatus('GitHub login failed: ' + error.message, true);
-      githubBtn.textContent = 'Continue with GitHub';
-      githubBtn.disabled = false;
+      setAuthStatus('GitHub sign-in failed: ' + error.message, true);
+      resetOAuthBtn(githubBtn, 'Continue with GitHub');
+    }
+  });
+
+  // Google OAuth
+  googleBtn.addEventListener('click', async () => {
+    setOAuthBtnLoading(googleBtn, 'Connecting…');
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.DEVIT_CONFIG.SITE_URL }
+    });
+    if (error) {
+      setAuthStatus('Google sign-in failed: ' + error.message, true);
+      resetOAuthBtn(googleBtn, 'Continue with Google');
     }
   });
 
   // Email sign-in
   loginBtn.addEventListener('click', async () => {
-    const email = emailIn.value.trim();
-    const pass  = passIn.value;
-    if (!email) { setAuthStatus('Enter your email', true); return; }
-    if (!pass)  { setAuthStatus('Enter your password', true); return; }
-    loginBtn.textContent = 'Signing in…';
+    const email = getSignInEmail();
+    const pass  = getSignInPass();
+    if (!email) { setAuthStatus('Please enter your email address', true); return; }
+    if (!pass)  { setAuthStatus('Please enter your password', true); return; }
+    loginBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Signing in…';
     loginBtn.disabled = true;
     const { error } = await sb.auth.signInWithPassword({ email, password: pass });
     if (error) {
       setAuthStatus(error.message, true);
-      loginBtn.textContent = 'Sign In';
+      loginBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Sign In';
       loginBtn.disabled = false;
     }
   });
 
   // Email sign-up
   signupBtn.addEventListener('click', async () => {
-    const email = emailIn.value.trim();
-    const pass  = passIn.value;
-    if (!email) { setAuthStatus('Enter your email', true); return; }
+    const email = getSignUpEmail();
+    const pass  = getSignUpPass();
+    const pass2 = getSignUpPass2();
+    if (!email) { setAuthStatus('Please enter your email address', true); return; }
     if (pass.length < 6) { setAuthStatus('Password must be at least 6 characters', true); return; }
-    signupBtn.textContent = 'Creating…';
+    if (pass !== pass2) { setAuthStatus('Passwords do not match', true); return; }
+    signupBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Creating account…';
     signupBtn.disabled = true;
     const { error } = await sb.auth.signUp({
       email, password: pass,
@@ -407,17 +443,17 @@ async function initAuth() {
     if (error) {
       setAuthStatus(error.message, true);
     } else {
-      setAuthStatus('Check your email to confirm your account! ✉️');
+      setAuthStatus('<i class="fa-solid fa-envelope" style="margin-right:6px"></i>Check your email to confirm your account!');
     }
-    signupBtn.textContent = 'Sign Up';
+    signupBtn.innerHTML = '<i class="fa-solid fa-user-plus"></i> Create Account';
     signupBtn.disabled = false;
   });
 
   // Magic Link
   magicBtn.addEventListener('click', async () => {
-    const email = emailIn.value.trim();
-    if (!email) { setAuthStatus('Enter your email for the magic link', true); return; }
-    magicBtn.textContent = 'Sending…';
+    const email = getSignInEmail();
+    if (!email) { setAuthStatus('Enter your email address first', true); return; }
+    magicBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending…';
     magicBtn.disabled = true;
     const { error } = await sb.auth.signInWithOtp({
       email,
@@ -426,10 +462,37 @@ async function initAuth() {
     if (error) {
       setAuthStatus(error.message, true);
     } else {
-      setAuthStatus('Magic link sent! Check your inbox ✨');
+      setAuthStatus('<i class="fa-solid fa-paper-plane" style="margin-right:6px"></i>Magic link sent! Check your inbox.');
     }
-    magicBtn.textContent = 'Send Magic Link instead';
+    magicBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Send Magic Link instead';
     magicBtn.disabled = false;
+  });
+
+  // Forgot password
+  if (forgotBtn) {
+    forgotBtn.addEventListener('click', async () => {
+      const email = getSignInEmail();
+      if (!email) { setAuthStatus('Enter your email address first', true); return; }
+      forgotBtn.textContent = 'Sending…';
+      forgotBtn.disabled = true;
+      const { error } = await sb.auth.resetPasswordForEmail(email, {
+        redirectTo: window.DEVIT_CONFIG.SITE_URL
+      });
+      if (!error) setAuthStatus('<i class="fa-solid fa-envelope" style="margin-right:6px"></i>Password reset email sent! Check your inbox.');
+      else setAuthStatus(error.message, true);
+      forgotBtn.textContent = 'Forgot password?';
+      forgotBtn.disabled = false;
+    });
+  }
+
+  // Also allow Enter key on password fields
+  ['auth-password-si'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') loginBtn.click(); });
+  });
+  ['auth-password-su2'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') signupBtn.click(); });
   });
 
   // Auth state listener — fires on login AND on page load if session exists
@@ -454,8 +517,8 @@ async function initAuth() {
           app.classList.add('visible');
           buildApp();
           const firstName = State.profile?.display_name?.split(' ')[0] || 'dev';
-          const greeting = event === 'SIGNED_IN' ? `Welcome, ${firstName}! 👋` : `Welcome back, ${firstName}! 👋`;
-          toast(greeting, '🚀');
+          const greeting = event === 'SIGNED_IN' ? `Welcome, ${firstName}!` : `Welcome back, ${firstName}!`;
+          toast(greeting, 'rocket');
         }, 400);
       }
     } else {
@@ -657,7 +720,7 @@ function buildTopbar() {
       <button class="topbar-action-btn" title="New post" id="new-post-btn">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
       </button>
-      <button class="topbar-action-btn" id="topbar-signout-btn" title="Sign out" style="font-size:16px">⏻</button>
+      <button class="topbar-action-btn" id="topbar-signout-btn" title="Sign out"><i class="fa-solid fa-power-off"></i></button>
       <div class="topbar-avatar" id="topbar-avatar-btn">
         ${State.profile?.avatar_url
           ? `<img src="${State.profile.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`
@@ -673,7 +736,7 @@ function buildTopbar() {
   $('#topbar-signout-btn').addEventListener('click', async () => {
     await sb.from('presence').update({ online: false }).eq('id', State.user.id);
     await sb.auth.signOut();
-    toast('Signed out. See you soon! 👋', '👋');
+    toast('Signed out. See you soon!', 'right-from-bracket');
   });
 
   // Search with debounce
@@ -772,13 +835,13 @@ function closeSearch() {
 function buildSidebar() {
   const sb_el = $('#sidebar');
   const links = [
-    { id: 'feed',          icon: '🏠', label: 'Home' },
-    { id: 'explore',       icon: '🔭', label: 'Explore' },
-    { id: 'notifications', icon: '🔔', label: 'Notifications', badge: State.unreadNotifs },
-    { id: 'messages',      icon: '💬', label: 'Messages', badge: State.unreadMessages },
-    { id: 'profile',       icon: '👤', label: 'Profile' },
-    { id: 'bookmarks',     icon: '🔖', label: 'Bookmarks' },
-    { id: 'settings',      icon: '⚙️', label: 'Settings' },
+    { id: 'feed',          icon: '<i class="fa-solid fa-house"></i>', label: 'Home' },
+    { id: 'explore',       icon: '<i class="fa-solid fa-compass"></i>', label: 'Explore' },
+    { id: 'notifications', icon: '<i class="fa-solid fa-bell"></i>', label: 'Notifications', badge: State.unreadNotifs },
+    { id: 'messages',      icon: '<i class="fa-solid fa-message"></i>', label: 'Messages', badge: State.unreadMessages },
+    { id: 'profile',       icon: '<i class="fa-solid fa-user"></i>', label: 'Profile' },
+    { id: 'bookmarks',     icon: '<i class="fa-solid fa-bookmark"></i>', label: 'Bookmarks' },
+    { id: 'settings',      icon: '<i class="fa-solid fa-gear"></i>', label: 'Settings' },
   ];
 
   let html = `<div class="sidebar-section-label">Navigate</div>`;
@@ -793,7 +856,7 @@ function buildSidebar() {
   html += `<div class="sidebar-divider"></div>
   <div class="sidebar-communities-header">
     <span>Communities</span>
-    <button id="create-community-btn" title="Create community">＋</button>
+    <button id="create-community-btn" title="Create community"><i class="fa-solid fa-plus"></i></button>
   </div>
   <div id="sidebar-communities">
     <div style="padding:8px 16px;font-size:12px;color:var(--text-muted)">Loading…</div>
@@ -909,14 +972,14 @@ async function loadWhoToFollow() {
       btn.textContent = '…';
       const { error } = await sb.from('follows').insert({ follower_id: State.user.id, following_id: uid });
       if (!error) {
-        btn.textContent = '✓';
+        btn.innerHTML = '<i class="fa-solid fa-check"></i> Following';
         btn.style.opacity = '0.5';
         // Update follow counts using rpc (requires increment function in Supabase)
         await sb.rpc('increment_followers', { target_user_id: uid });
         await sb.rpc('increment_following', { target_user_id: State.user.id });
         // Notify
         await sb.from('notifications').insert({ user_id: uid, actor_id: State.user.id, type: 'follow' });
-        toast('Followed!', '👤');
+        toast('Followed!', 'user-check');
       } else {
         btn.textContent = 'Follow';
         btn.disabled = false;
@@ -1071,7 +1134,7 @@ function subscribeToNewPosts(container) {
           card.style.opacity = '1';
           card.style.transform = '';
         });
-        toast(`@${profile.username} just posted`, '📢');
+        toast(`@${profile.username} just posted`, 'bullhorn');
       }
     })
     .subscribe();
@@ -1150,7 +1213,7 @@ function buildComposer(container) {
 
     const { error } = await sb.from('posts').insert(postData);
     if (error) {
-      toast('Failed to post: ' + error.message, '❌');
+      toast('Failed to post: ' + error.message, 'circle-exclamation');
     } else {
       // Refresh feed
       const feed = $('#feed');
@@ -1162,7 +1225,7 @@ function buildComposer(container) {
       codeBlock.classList.remove('visible');
       hasCode = false;
       addCodeBtn.style.color = '';
-      toast('Posted! 🚀', '🚀');
+      toast('Posted!', 'paper-plane');
     }
     submitBtn.disabled = false;
     submitBtn.textContent = 'Post';
@@ -1189,7 +1252,7 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
         </div>
         <div class="post-time">${timeAgo(post.created_at)}</div>
       </div>
-      ${post.author_id === State.user.id ? `<button class="post-delete-btn" data-pid="${post.id}" title="Delete post" style="margin-left:auto;color:var(--text-muted);font-size:14px;padding:4px 8px;border-radius:6px;transition:color 0.15s">✕</button>` : ''}
+      ${post.author_id === State.user.id ? `<button class="post-delete-btn" data-pid="${post.id}" title="Delete post" style="margin-left:auto;color:var(--text-muted);font-size:14px;padding:4px 8px;border-radius:6px;transition:color 0.15s">>✕</button>#x2715;</button>` : ''}
     </div>
     ${contentHtml}
     <div class="post-actions">
@@ -1245,10 +1308,10 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
     bookmarkBtn.querySelector('svg').setAttribute('fill', bookmarkedState ? 'currentColor' : 'none');
     if (bookmarkedState) {
       await sb.from('bookmarks').insert({ post_id: post.id, user_id: State.user.id });
-      toast('Saved to bookmarks', '🔖');
+      toast('Saved to bookmarks', 'bookmark');
     } else {
       await sb.from('bookmarks').delete().eq('post_id', post.id).eq('user_id', State.user.id);
-      toast('Removed from bookmarks', '');
+      toast('Removed from bookmarks', 'bookmark');
     }
   });
 
@@ -1258,7 +1321,7 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
   // Share
   $('.share-btn', card).addEventListener('click', e => {
     e.stopPropagation();
-    navigator.clipboard?.writeText(window.location.origin + '/post/' + post.id).then(() => toast('Link copied!', '🔗'));
+    navigator.clipboard?.writeText(window.location.origin + '/post/' + post.id).then(() => toast('Link copied!', 'link'));
   });
 
   // Delete (own posts)
@@ -1273,7 +1336,7 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
         card.style.transform = 'scale(0.95)';
         card.style.transition = '0.3s ease';
         setTimeout(() => card.remove(), 300);
-        toast('Post deleted', '🗑️');
+        toast('Post deleted', 'trash');
       }
     });
   }
@@ -1422,12 +1485,12 @@ async function renderExplore(main) {
           await sb.from('community_members').delete().eq('community_id', cid).eq('user_id', State.user.id);
           btn.classList.remove('joined');
           btn.textContent = 'Join';
-          toast('Left community', '👋');
+          toast('Left community', 'arrow-right-from-bracket');
         } else {
           await sb.from('community_members').insert({ community_id: cid, user_id: State.user.id });
           btn.classList.add('joined');
-          btn.textContent = '✓ Joined';
-          toast('Joined! 🎉', '🌍');
+          btn.innerHTML = '<i class="fa-solid fa-check"></i> Joined';
+          toast('Joined!', 'circle-check');
           loadSidebarCommunities();
         }
         btn.disabled = false;
@@ -1471,9 +1534,9 @@ async function renderExplore(main) {
       btn.disabled = true;
       btn.textContent = '…';
       await sb.from('follows').insert({ follower_id: State.user.id, following_id: uid });
-      btn.textContent = '✓ Following';
+      btn.innerHTML = '<i class="fa-solid fa-check"></i> Following';
       btn.style.opacity = '0.6';
-      toast('Followed!', '👤');
+      toast('Followed!', 'user-check');
     });
   });
 }
@@ -1486,7 +1549,7 @@ function buildCommunityCard(c, isJoined = false) {
     <div class="community-card-meta">
       <span class="community-card-members">👥 ${fmtNum(c.members_count || 0)}</span>
     </div>
-    <button class="join-btn ${isJoined ? 'joined' : ''}" data-cid="${c.id}">${isJoined ? '✓ Joined' : 'Join'}</button>
+    <button class="join-btn ${isJoined ? 'joined' : ''}" data-cid="${c.id}">${isJoined ? '<i class="fa-solid fa-check"></i> Joined' : 'Join'}</button>
   </div>`;
 }
 
@@ -1551,7 +1614,7 @@ function openCreateCommunityModal() {
   $('#create-comm-btn').addEventListener('click', async () => {
     const name = $('#comm-name').value.trim();
     const desc = $('#comm-desc').value.trim();
-    if (!name) { toast('Enter a community name', '⚠️'); return; }
+    if (!name) { toast('Enter a community name', 'triangle-exclamation'); return; }
 
     const btn = $('#create-comm-btn');
     btn.disabled = true;
@@ -1563,7 +1626,7 @@ function openCreateCommunityModal() {
     }).select().single();
 
     if (error) {
-      toast('Failed: ' + error.message, '❌');
+      toast('Failed: ' + error.message, 'circle-exclamation');
       btn.disabled = false;
       btn.textContent = 'Create Community';
       return;
@@ -1623,7 +1686,7 @@ async function openCommunity(communityId) {
       `).join('')}
       ${community.owner_id === State.user.id ? `
         <div class="channel-item" id="add-channel-btn" style="color:var(--text-muted);font-size:12px;margin-top:4px">
-          <span>＋</span> Add channel
+          <i class="fa-solid fa-plus"></i> Add channel
         </div>
       ` : ''}
     </div>
@@ -1647,7 +1710,7 @@ async function openCommunity(communityId) {
     joinBtn.addEventListener('click', async () => {
       await sb.from('community_members').insert({ community_id: communityId, user_id: State.user.id });
       joinBtn.remove();
-      toast('Joined! 🎉', '🌍');
+      toast('Joined!', 'circle-check');
       loadSidebarCommunities();
     });
   }
@@ -1672,7 +1735,7 @@ async function openCommunity(communityId) {
       const confirmBtn = $('#confirm-add-channel-btn');
       const doCreate = async () => {
         const name = $('#new-channel-name').value.trim();
-        if (!name) { toast('Enter a channel name', '⚠️'); return; }
+        if (!name) { toast('Enter a channel name', 'triangle-exclamation'); return; }
         const cleanName = name.toLowerCase().replace(/[^a-z0-9-]/g, '-');
         confirmBtn.disabled = true;
         confirmBtn.textContent = 'Creating…';
@@ -1872,7 +1935,12 @@ async function loadNotifications() {
     return;
   }
 
-  const iconMap = { like: '❤️', follow: '👤', comment: '💬', mention: '@' };
+  const iconMap = {
+    like:    '<i class="fa-solid fa-heart"></i>',
+    follow:  '<i class="fa-solid fa-user-plus"></i>',
+    comment: '<i class="fa-solid fa-comment"></i>',
+    mention: '<i class="fa-solid fa-at"></i>'
+  };
   const textMap = {
     like: actor => `<strong>${actor}</strong> liked your post`,
     follow: actor => `<strong>${actor}</strong> started following you`,
@@ -1886,7 +1954,7 @@ async function loadNotifications() {
     return `<div class="notif-item ${n.read ? '' : 'unread'}" data-nid="${n.id}">
       <div style="position:relative;flex-shrink:0">
         <div class="notif-avatar" style="background:${color}">${avatarInitials(actor)}</div>
-        <div class="notif-icon notif-${n.type}">${iconMap[n.type] || '🔔'}</div>
+        <div class="notif-icon notif-${n.type}">${iconMap[n.type] || '<i class="fa-solid fa-bell"></i>'}</div>
       </div>
       <div style="flex:1;min-width:0">
         <div class="notif-text">${(textMap[n.type] || (() => 'New notification'))(actor)}</div>
@@ -1912,7 +1980,7 @@ async function renderMessages(main) {
       <div class="conversations-list">
         <div class="conversations-header">
           Messages
-          <button id="new-dm-btn" style="color:var(--cyan);font-size:18px;font-weight:700" title="New message">＋</button>
+          <button id="new-dm-btn" style="color:var(--cyan);font-size:16px;font-weight:700" title="New message"><i class="fa-solid fa-plus"></i></button>
         </div>
         <div id="conversations-container">
           <div style="padding:16px;text-align:center;color:var(--text-muted);font-size:13px">Loading…</div>
@@ -1920,7 +1988,7 @@ async function renderMessages(main) {
       </div>
       <div class="dm-view" id="dm-view">
         <div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--text-muted)">
-          <div style="font-size:40px">💬</div>
+          <div style="font-size:32px;color:var(--text-muted)"><i class="fa-solid fa-message"></i></div>
           <div style="font-size:14px;font-weight:600">Select a conversation</div>
           <div style="font-size:12px">or start a new one</div>
         </div>
@@ -2175,7 +2243,7 @@ async function renderProfile(main, userId = null) {
             : `<button class="profile-action-btn ${isFollowing ? 'secondary' : 'primary'}" id="follow-profile-btn">${isFollowing ? 'Unfollow' : 'Follow'}</button>
                <button class="profile-action-btn secondary" id="dm-profile-btn">Message</button>`
           }
-          <button class="profile-action-btn secondary" id="share-profile-btn">🔗</button>
+          <button class="profile-action-btn secondary" id="share-profile-btn"><i class="fa-solid fa-link"></i></button>
         </div>
       </div>
       <div class="profile-name">${safeName}</div>
@@ -2183,7 +2251,7 @@ async function renderProfile(main, userId = null) {
       <div class="profile-bio">${safeBio}</div>
       <div class="profile-meta">
         ${safeLocation ? `<div class="profile-meta-item">📍 <span>${safeLocation}</span></div>` : ''}
-        ${safeWebsite ? `<div class="profile-meta-item">🔗 <a href="${safeWebsite}" target="_blank" rel="noopener noreferrer" style="color:var(--cyan)">${safeWebsite}</a></div>` : ''}
+        ${safeWebsite ? `<div class="profile-meta-item"><i class="fa-solid fa-link"></i> <a href="${safeWebsite}" target="_blank" rel="noopener noreferrer" style="color:var(--cyan)">${safeWebsite}</a></div>` : ''}
         <div class="profile-meta-item">📅 <span>Joined ${new Date(profile.created_at).toLocaleDateString('en-US', {month:'short',year:'numeric'})}</span></div>
       </div>
       <div class="profile-stats">
@@ -2214,7 +2282,7 @@ async function renderProfile(main, userId = null) {
         followState = false;
         followBtn.textContent = 'Follow';
         followBtn.className = 'profile-action-btn primary';
-        toast('Unfollowed', '');
+        toast('Unfollowed', 'user-minus');
       } else {
         await sb.from('follows').insert({ follower_id: State.user.id, following_id: targetId });
         await sb.rpc('increment_followers', { target_user_id: targetId });
@@ -2223,7 +2291,7 @@ async function renderProfile(main, userId = null) {
         followState = true;
         followBtn.textContent = 'Unfollow';
         followBtn.className = 'profile-action-btn secondary';
-        toast('Followed!', '👤');
+        toast('Followed!', 'user-check');
       }
       followBtn.disabled = false;
     });
@@ -2251,7 +2319,7 @@ async function renderProfile(main, userId = null) {
   const shareProfileBtn = $('#share-profile-btn', main);
   if (shareProfileBtn) {
     shareProfileBtn.addEventListener('click', () => {
-      navigator.clipboard?.writeText(window.location.href).then(() => toast('Link copied!', '🔗'));
+      navigator.clipboard?.writeText(window.location.href).then(() => toast('Link copied!', 'link'));
     });
   }
 
@@ -2357,7 +2425,7 @@ function openProfileEditModal(profile) {
       const { data: updated } = await sb.from('profiles').select('*').eq('id', State.user.id).single();
       State.profile = updated;
       modal.classList.remove('open');
-      toast('Profile updated! ✨', '✏️');
+      toast('Profile updated!', 'pen');
       navigateTo('profile');
     }
   });
@@ -2444,8 +2512,8 @@ function renderSettings(main) {
   });
   $('#settings-change-pass').addEventListener('click', async () => {
     const { error } = await sb.auth.resetPasswordForEmail(State.user.email, { redirectTo: window.DEVIT_CONFIG.SITE_URL });
-    if (!error) toast('Password reset email sent! ✉️', '✉️');
-    else toast('Error: ' + error.message, '❌');
+    if (!error) toast('Password reset email sent!', 'envelope');
+    else toast('Error: ' + error.message, 'circle-exclamation');
   });
 }
 
