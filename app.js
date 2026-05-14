@@ -12,9 +12,11 @@ const sb = createClient(
   window.DEVIT_CONFIG.SUPABASE_ANON_KEY,
   {
     auth: {
-      detectSessionInUrl: true,   // parse #access_token hash on GitHub Pages
+      detectSessionInUrl: true,   // parse tokens from URL on redirect
       persistSession: true,
       autoRefreshToken: true,
+      flowType: 'pkce',           // PKCE uses ?code= query param instead of #access_token hash,
+                                  // which is more reliable and avoids hash-stripping race conditions
     }
   }
 );
@@ -495,47 +497,75 @@ async function initAuth() {
     if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') signupBtn.click(); });
   });
 
-  // Auth state listener — fires on login AND on page load if session exists
+  // Auth state listener
+  // IMPORTANT: on OAuth redirect the sequence is:
+  //   1. INITIAL_SESSION fires with null (hash not yet parsed)
+  //   2. SIGNED_IN fires with the real session once hash is consumed
+  // So we must NOT reset state on a null session that follows a SIGNED_IN.
   let appBuilt = false;
+  let signedInOnce = false; // once true, ignore null sessions from event noise
+
   sb.auth.onAuthStateChange(async (event, session) => {
-    if (session?.user) {
-      State.user = session.user;
-      await ensureProfile(session.user);
-
-      // Clean the OAuth hash from the URL bar so tokens aren't visible / bookmarked
-      if (window.location.hash.includes('access_token')) {
-        history.replaceState(null, '', window.location.pathname);
+    // Ignore intermediate null-session events after we've already signed in
+    if (!session?.user) {
+      if (event === 'SIGNED_OUT') {
+        // Genuine sign-out
+        signedInOnce = false;
+        appBuilt = false;
+        State.user = null;
+        State.profile = null;
+        screen.style.display = 'flex';
+        screen.style.opacity = '1';
+        screen.style.transform = '';
+        screen.style.transition = '';
+        app.classList.remove('visible');
       }
+      // All other null-session events (INITIAL_SESSION noise, TOKEN_REFRESHED edge cases) — ignore
+      return;
+    }
 
-      if (!appBuilt) {
-        appBuilt = true;
-        screen.style.opacity = '0';
-        screen.style.transform = 'scale(1.02)';
-        screen.style.transition = '0.4s ease';
-        setTimeout(() => {
-          screen.style.display = 'none';
-          app.classList.add('visible');
-          buildApp();
-          const firstName = State.profile?.display_name?.split(' ')[0] || 'dev';
-          const greeting = event === 'SIGNED_IN' ? `Welcome, ${firstName}!` : `Welcome back, ${firstName}!`;
-          toast(greeting, 'rocket');
-        }, 400);
-      }
-    } else {
-      State.user = null;
-      State.profile = null;
-      appBuilt = false;
-      screen.style.display = 'flex';
-      screen.style.opacity = '1';
-      screen.style.transform = '';
-      app.classList.remove('visible');
+    // We have a real session
+    signedInOnce = true;
+    State.user = session.user;
+
+    // Strip OAuth tokens from URL bar (do this early, before any async work)
+    // Handles both implicit flow (#access_token) and PKCE flow (?code=)
+    const url = new URL(window.location.href);
+    const hasOAuthHash = url.hash && (
+      url.hash.includes('access_token') ||
+      url.hash.includes('refresh_token')
+    );
+    const hasOAuthCode = url.searchParams.has('code');
+    if (hasOAuthHash || hasOAuthCode) {
+      url.hash = '';
+      url.searchParams.delete('code');
+      url.searchParams.delete('state');
+      history.replaceState(null, '', url.pathname + (url.search !== '?' ? url.search : ''));
+    }
+
+    await ensureProfile(session.user);
+
+    if (!appBuilt) {
+      appBuilt = true;
+      screen.style.opacity = '0';
+      screen.style.transform = 'scale(1.02)';
+      screen.style.transition = '0.4s ease';
+      setTimeout(() => {
+        screen.style.display = 'none';
+        app.classList.add('visible');
+        buildApp();
+        const firstName = State.profile?.display_name?.split(' ')[0] || 'dev';
+        toast(`Welcome${event === 'SIGNED_IN' ? '' : ' back'}, ${firstName}!`, 'rocket');
+      }, 400);
     }
   });
 
-  // Check existing session immediately
-  const { data: { session } } = await sb.auth.getSession();
-  if (!session) {
-    // No session — auth screen is already visible
+  // Eagerly check for an existing session on page load.
+  // On OAuth redirect the hash is present — getSession() parses it and
+  // triggers onAuthStateChange(SIGNED_IN), so we don't need to act here.
+  const { data: { session: existingSession } } = await sb.auth.getSession();
+  if (!existingSession) {
+    // No session at all — auth screen stays visible (already shown by default)
   }
 }
 
