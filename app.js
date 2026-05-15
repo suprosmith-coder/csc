@@ -12,10 +12,10 @@ const sb = createClient(
   window.DEVIT_CONFIG.SUPABASE_ANON_KEY,
   {
     auth: {
-      detectSessionInUrl: true,   // Parses ?code= (PKCE) or #access_token (implicit) from URL
+      detectSessionInUrl: true,
       persistSession: true,
       autoRefreshToken: true,
-      flowType: 'pkce',          // PKCE uses ?code= query param — survives mobile hash-stripping
+      flowType: 'implicit',
     }
   }
 );
@@ -745,16 +745,13 @@ async function initAuth() {
     State.user    = session.user;
 
     try {
-    // Clean OAuth tokens from the URL bar so back-button and
-    // copy-pasting the URL don't expose or re-trigger tokens.
-    // PKCE flow: code arrives as ?code= query param — strip after Supabase exchanges it.
-    // Implicit flow fallback: tokens in hash (#access_token=...) — also strip.
+    // Clean OAuth tokens from the URL bar after Supabase parses them.
+    // Implicit flow tokens arrive in the hash (#access_token=...).
     try {
       const url = new URL(window.location.href);
-      const hasOAuthCode = url.searchParams.has('code') || url.searchParams.has('error');
       const hasOAuthHash = url.hash && (url.hash.includes('access_token') || url.hash.includes('refresh_token'));
-      if (hasOAuthCode || hasOAuthHash) {
-        history.replaceState(null, '', url.pathname);
+      if (hasOAuthHash) {
+        history.replaceState(null, '', url.pathname + (url.search && url.search !== '?' ? url.search : ''));
       }
     } catch (e) { /* non-critical */ }
 
@@ -789,33 +786,65 @@ async function initAuth() {
 
   }); // end onAuthStateChange
 
-  // MOBILE FIX: On iOS Safari, the browser can reload the page after
-  // the OAuth redirect in a way that fires before DOMContentLoaded.
-  // For PKCE flow, the code arrives as ?code= query param (not a hash).
-  // We call getSession regardless so Supabase can exchange it.
-  const _hash   = window.location.hash;
-  const _search = window.location.search;
-  const _hasOAuthParams = (
-    (_hash && (_hash.includes('access_token') || _hash.includes('refresh_token'))) ||
-    (_search && (_search.includes('code=') || _search.includes('error=')))
-  );
-  // Always call getSession — it's instant from localStorage for returning users,
-  // and exchanges the PKCE code for a session when one is present.
-  await sb.auth.getSession();
+  // ── getSession() on page load ─────────────────────────────────
+  // For returning users: resolves instantly from localStorage.
+  // For OAuth redirects (implicit): Supabase parses #access_token from the hash.
+  //
+  // MOBILE FIX: Mobile browsers (iOS Safari, Chrome Android) sometimes deliver
+  // the hash *after* JS has already executed, or restore the page from bfcache
+  // (back-forward cache) skipping onAuthStateChange entirely.
+  // Strategy:
+  //   1. If hash token detected → retry getSession up to 5× with 200ms gaps
+  //   2. pageshow listener → catches bfcache restore (iOS Safari back button)
+  //   3. hashchange listener → catches late hash delivery on Android WebViews
 
-  // Belt-and-suspenders: also catch any hash that arrives after page load
-  // (some Android WebViews deliver it asynchronously).
-  // Also handles PKCE ?code= query param arriving late.
+  const _hash = window.location.hash;
+  const _hasTokenHash = _hash && (_hash.includes('access_token') || _hash.includes('refresh_token'));
+
+  if (_hasTokenHash) {
+    // Hash is present — retry until Supabase parses it (mobile may be slow)
+    let _gotSession = false;
+    for (let i = 0; i < 5; i++) {
+      const { data } = await sb.auth.getSession();
+      if (data?.session) { _gotSession = true; break; }
+      await new Promise(r => setTimeout(r, 200));
+    }
+    // If still nothing, Supabase may not have seen the hash yet — wait one more tick
+    if (!_gotSession) await sb.auth.getSession();
+  } else {
+    await sb.auth.getSession();
+  }
+
+  // Catch hash arriving after page load (Android WebViews)
   window.addEventListener('hashchange', async () => {
     const h = window.location.hash;
     if (h && (h.includes('access_token') || h.includes('refresh_token'))) {
       await sb.auth.getSession();
     }
   });
-  // Handle PKCE code= param — some mobile browsers fire popstate instead of hashchange
-  window.addEventListener('popstate', async () => {
-    if (window.location.search.includes('code=')) {
-      await sb.auth.getSession();
+
+  // Catch bfcache restore (iOS Safari back-button after OAuth redirect)
+  // bfcache restores don't re-fire DOMContentLoaded or onAuthStateChange,
+  // so we need to recheck the session manually here.
+  window.addEventListener('pageshow', async (e) => {
+    if (e.persisted && !State.user) {
+      const { data } = await sb.auth.getSession();
+      // If we now have a session but the app isn't built, boot it
+      if (data?.session && !appBuilt) {
+        // onAuthStateChange won't fire from bfcache — trigger manually
+        const user = data.session.user;
+        State.user = user;
+        await ensureProfile(user);
+        _signedInUser = user.id;
+        appBuilt = true;
+        const screen = $('#auth-screen');
+        const app    = $('#app');
+        screen.style.display = 'none';
+        app.classList.add('visible');
+        await buildApp();
+        const firstName = State.profile?.display_name?.split(' ')[0] || 'dev';
+        toast(`Welcome back, ${firstName}!`, 'rocket');
+      }
     }
   });
   // If no session exists, auth screen stays visible (shown by default in HTML).
