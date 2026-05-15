@@ -367,15 +367,16 @@ const _SIGNIN_MAX    = 5;
 const _SIGNIN_LOCK   = 30_000;
 
 function checkSignInRateLimit() {
+  // Only check if currently locked — do NOT increment here.
+  // Increment happens in recordSignInFailure() after a confirmed failure.
   if (Date.now() < _signInLockUntil) {
     const secs = Math.ceil((_signInLockUntil - Date.now()) / 1000);
     setAuthStatus(`Too many attempts — wait ${secs}s before trying again.`, true);
     return false;
   }
-  // Bug fix: don't pre-increment here — increment only on confirmed failure (see loginBtn handler)
   return true;
 }
-function incrementSignInFailure() {
+function recordSignInFailure() {
   _signInAttempts++;
   if (_signInAttempts >= _SIGNIN_MAX) {
     _signInLockUntil = Date.now() + _SIGNIN_LOCK;
@@ -407,10 +408,11 @@ function showSessionExpiryBanner() {
   const b = document.createElement('div');
   b.id = 'session-expiry-banner';
   b.style.cssText = 'position:fixed;bottom:72px;left:50%;transform:translateX(-50%);background:var(--bg-surface,#1e1e2e);border:1px solid var(--border,#333);border-radius:12px;padding:10px 16px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-primary,#fff);z-index:9999;box-shadow:0 4px 20px #0006';
-  b.innerHTML = '<i class="fa-solid fa-clock" style="color:var(--amber,#fbbf24)"></i><span>Your session expires soon.</span><button id="session-refresh-btn" style="margin-left:8px;padding:4px 10px;border-radius:6px;background:var(--brand,#63d9ff);color:#000;border:none;cursor:pointer;font-size:12px;font-weight:600">Stay signed in</button><button id="session-dismiss-btn" style="background:none;border:none;color:var(--text-muted,#888);cursor:pointer;font-size:16px;line-height:1;margin-left:4px">×</button>';
+  b.innerHTML = '<i class="fa-solid fa-clock" style="color:var(--amber,#fbbf24)"></i><span>Your session expires soon.</span><button id="session-refresh-btn" style="margin-left:8px;padding:4px 10px;border-radius:6px;background:var(--brand,#63d9ff);color:#000;border:none;cursor:pointer;font-size:12px;font-weight:600">Stay signed in</button><button id="session-expiry-dismiss-btn" style="background:none;border:none;color:var(--text-muted,#888);cursor:pointer;font-size:16px;line-height:1;margin-left:4px">×</button>';
   document.body.appendChild(b);
-  // Bug fix: was using broken inline onclick with this.closest() — wire via addEventListener instead
-  b.querySelector('#session-dismiss-btn').addEventListener('click', () => { b.style.display = 'none'; });
+  document.getElementById('session-expiry-dismiss-btn').addEventListener('click', () => {
+    document.getElementById('session-expiry-banner').style.display = 'none';
+  });
   b.querySelector('#session-refresh-btn').addEventListener('click', async () => {
     try {
       const { data, error } = await sb.auth.refreshSession();
@@ -455,17 +457,16 @@ async function initAuth() {
   // ── GitHub OAuth ─────────────────────────────────────────────
   githubBtn.addEventListener('click', async () => {
     setOAuthBtnLoading(githubBtn, 'Connecting…');
+    // Reset button after 8 s in case the redirect is blocked (popup blocker / CSP).
+    const githubResetTimer = setTimeout(() => resetOAuthBtn(githubBtn, 'Continue with GitHub'), 8000);
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'github',
       options: { redirectTo: window.DEVIT_CONFIG.SITE_URL }
     });
     if (error) {
+      clearTimeout(githubResetTimer);
       setAuthStatus('GitHub sign-in failed: ' + error.message, true);
       resetOAuthBtn(githubBtn, 'Continue with GitHub');
-    } else {
-      // Bug fix: if no error but redirect doesn't happen (e.g. popup blocker),
-      // re-enable the button after 10s so the user isn't permanently stuck.
-      setTimeout(() => resetOAuthBtn(githubBtn, 'Continue with GitHub'), 10_000);
     }
     // On success the browser is redirected — no further JS runs here.
   });
@@ -476,6 +477,8 @@ async function initAuth() {
   // (Ported from Cyanix AI signInOAuth('google'))
   googleBtn.addEventListener('click', async () => {
     setOAuthBtnLoading(googleBtn, 'Connecting…');
+    // Reset button after 8 s in case the redirect is blocked (popup blocker / CSP).
+    const googleResetTimer = setTimeout(() => resetOAuthBtn(googleBtn, 'Continue with Google'), 8000);
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -484,11 +487,9 @@ async function initAuth() {
       }
     });
     if (error) {
+      clearTimeout(googleResetTimer);
       setAuthStatus('Google sign-in failed: ' + error.message, true);
       resetOAuthBtn(googleBtn, 'Continue with Google');
-    } else {
-      // Bug fix: re-enable after 10s if redirect is blocked
-      setTimeout(() => resetOAuthBtn(googleBtn, 'Continue with Google'), 10_000);
     }
     // On success the browser is redirected — no further JS runs here.
   });
@@ -504,7 +505,7 @@ async function initAuth() {
     loginBtn.disabled = true;
     const { error } = await sb.auth.signInWithPassword({ email, password: pass });
     if (error) {
-      incrementSignInFailure(); // Bug fix: count failures, not attempts
+      recordSignInFailure(); // only count real failures
       setAuthStatus(error.message, true);
       loginBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Sign In';
       loginBtn.disabled = false;
@@ -607,11 +608,16 @@ async function initAuth() {
     // User clicked a password-reset link. session.access_token is
     // valid and scoped to updateUser() only. Surface the reset UI.
     if (event === 'PASSWORD_RECOVERY') {
-      setAuthStatus('<i class="fa-solid fa-key" style="margin-right:6px"></i>Enter your new password below to reset it.');
-      screen.style.display = 'flex';
-      app.classList.remove('visible');
-      // Optionally scroll to / show password field
-      document.getElementById('auth-password-si')?.focus();
+      // If the app is already visible (user was signed in), open a modal
+      // instead of silently showing the auth screen behind the app.
+      if (appBuilt) {
+        openChangePasswordModal();
+      } else {
+        setAuthStatus('<i class="fa-solid fa-key" style="margin-right:6px"></i>Enter your new password below to reset it.');
+        screen.style.display = 'flex';
+        app.classList.remove('visible');
+        document.getElementById('auth-password-si')?.focus();
+      }
       return;
     }
 
@@ -654,52 +660,49 @@ async function initAuth() {
     State.user    = session.user;
 
     try {
-      // Clean OAuth tokens from the URL bar so back-button and
-      // copy-pasting the URL don't expose or re-trigger tokens.
-      // Handles both PKCE flow (?code=) and implicit flow (#access_token).
-      // Bug fix: only delete 'state' param when we're actually handling an OAuth code
-      // to avoid clobbering legitimate ?state= deep-link params.
-      try {
-        const url = new URL(window.location.href);
-        const hasOAuthHash = url.hash && (url.hash.includes('access_token') || url.hash.includes('refresh_token'));
-        const hasOAuthCode = url.searchParams.has('code');
-        if (hasOAuthHash || hasOAuthCode) {
-          url.hash = '';
-          url.searchParams.delete('code');
-          if (hasOAuthCode) url.searchParams.delete('state'); // only remove state for OAuth code flow
-          history.replaceState(null, '', url.pathname + (url.search && url.search !== '?' ? url.search : ''));
-        }
-      } catch (e) { /* non-critical */ }
+    // Clean OAuth tokens from the URL bar so back-button and
+    // copy-pasting the URL don't expose or re-trigger tokens.
+    // Handles both PKCE flow (?code=) and implicit flow (#access_token).
+    try {
+      const url = new URL(window.location.href);
+      const hasOAuthHash = url.hash && (url.hash.includes('access_token') || url.hash.includes('refresh_token'));
+      const hasOAuthCode = url.searchParams.has('code');
+      if (hasOAuthHash || hasOAuthCode) {
+        url.hash = '';
+        url.searchParams.delete('code');
+        url.searchParams.delete('state');
+        history.replaceState(null, '', url.pathname + (url.search && url.search !== '?' ? url.search : ''));
+      }
+    } catch (e) { /* non-critical */ }
 
-      // Schedule a session expiry warning 5 min before the JWT expires
-      scheduleSessionExpiryWarning(session);
+    // Schedule a session expiry warning 5 min before the JWT expires
+    scheduleSessionExpiryWarning(session);
 
-      await ensureProfile(session.user);
+    await ensureProfile(session.user);
 
-      _signedInUser = session.user.id;
+    _signedInUser = session.user.id;
 
-      if (!appBuilt) {
-        // Bug fix: set appBuilt AFTER buildApp() is awaited, not before,
-        // so a second auth event during the animation window doesn't skip init.
-        screen.style.opacity    = '0';
-        screen.style.transform  = 'scale(1.02)';
-        screen.style.transition = '0.4s ease';
-        await new Promise(resolve => setTimeout(resolve, 400));
+    if (!appBuilt) {
+      screen.style.opacity    = '0';
+      screen.style.transform  = 'scale(1.02)';
+      screen.style.transition = '0.4s ease';
+      setTimeout(async () => {
+        appBuilt = true;  // set inside callback so double-fire can't sneak through
         screen.style.display = 'none';
         app.classList.add('visible');
         await buildApp();
-        appBuilt = true; // mark built only after buildApp fully resolves
         const firstName = State.profile?.display_name?.split(' ')[0] || 'dev';
         toast(`Welcome${event === 'SIGNED_IN' ? '' : ' back'}, ${firstName}!`, 'rocket');
-      }
+      }, 400);
+    }
+
     } catch (bootErr) {
-      // Bug fix: always release _syncPending even if boot throws, preventing permanent deadlock
+      // Ensure _syncPending never stays true, which would permanently lock the auth flow
       console.error('[Devit] Auth boot error:', bootErr);
-      toast('Sign-in error — please try again.', 'circle-exclamation');
+      setAuthStatus('Sign-in error — please refresh and try again.', true);
     } finally {
       _syncPending = false;
     }
-  });
 
   // ── getSession() on page load ─────────────────────────────────
   // Resolves instantly from localStorage (no network call) for
@@ -730,7 +733,47 @@ function showEmailVerifyBanner(email) {
   });
 }
 
-async function ensureProfile(authUser) {
+// ── Change Password Modal (shown on PASSWORD_RECOVERY when app is visible) ──
+function openChangePasswordModal() {
+  const modal = $('#modal-overlay');
+  const body  = $('#modal-body');
+  if (!modal || !body) return;
+  $('#modal-title-text').textContent = 'Set New Password';
+  modal.classList.add('open');
+  body.innerHTML = `
+    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+      <div class="auth-input-group">
+        <label>New Password</label>
+        <input type="password" id="recovery-pw" class="auth-input" placeholder="At least 6 characters" minlength="6" autocomplete="new-password">
+      </div>
+      <div class="auth-input-group">
+        <label>Confirm New Password</label>
+        <input type="password" id="recovery-pw2" class="auth-input" placeholder="Repeat password" autocomplete="new-password">
+      </div>
+      <div id="recovery-status" style="font-size:12px;color:var(--text-muted);display:none"></div>
+      <button class="auth-btn-primary" id="recovery-save-btn"><i class="fa-solid fa-key"></i> Set Password</button>
+    </div>
+  `;
+  $('#recovery-save-btn').addEventListener('click', async () => {
+    const pw  = $('#recovery-pw').value;
+    const pw2 = $('#recovery-pw2').value;
+    const statusEl = $('#recovery-status');
+    statusEl.style.display = 'block';
+    if (pw.length < 6) { statusEl.style.color = 'var(--rose)'; statusEl.textContent = 'Password must be at least 6 characters.'; return; }
+    if (pw !== pw2)   { statusEl.style.color = 'var(--rose)'; statusEl.textContent = 'Passwords do not match.'; return; }
+    const btn = $('#recovery-save-btn');
+    btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving…';
+    const { error } = await sb.auth.updateUser({ password: pw });
+    if (error) {
+      statusEl.style.color = 'var(--rose)';
+      statusEl.textContent = 'Failed: ' + error.message;
+      btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-key"></i> Set Password';
+    } else {
+      modal.classList.remove('open');
+      toast('Password updated!', 'check');
+    }
+  });
+}
   let { data: profile, error } = await sb
     .from('profiles')
     .select('*')
@@ -744,30 +787,37 @@ async function ensureProfile(authUser) {
     // (Fix ported from Cyanix AI — original only handled GitHub.)
     const meta = authUser.user_metadata || {};
     const email = authUser.email || '';
-    // Bug fix: append a short unique suffix to avoid username collision on upsert
-    // when two users share the same email prefix or OAuth display name.
-    const baseUsername = (meta.user_name || meta.preferred_username || email.split('@')[0] || 'user').toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 24);
-    const username = baseUsername + '_' + authUser.id.slice(0, 5); // e.g. john_a3f9c — always unique
-    const display_name = meta.full_name || meta.name || username;
+    let baseUsername = (meta.user_name || meta.preferred_username || email.split('@')[0] || 'user_' + Date.now()).toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 30);
+    const display_name = meta.full_name || meta.name || baseUsername;
     const avatar_url = meta.avatar_url || meta.picture || null; // GitHub || Google
 
-    const { data: newProfile, error: createErr } = await sb
-      .from('profiles')
-      .upsert({
-        id: authUser.id,
-        username,
-        display_name,
-        avatar_url,
-        bio: '',
-        location: '',
-        website: '',
-        tech_stack: [],
-        followers_count: 0,
-        following_count: 0,
-        posts_count: 0,
-      }, { onConflict: 'id' })
-      .select()
-      .single();
+    // Attempt upsert; if username is taken (23505 unique violation), retry with a random suffix.
+    let newProfile = null;
+    let createErr  = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const username = attempt === 0 ? baseUsername : baseUsername.slice(0, 25) + '_' + Math.random().toString(36).slice(2, 6);
+      const res = await sb
+        .from('profiles')
+        .upsert({
+          id: authUser.id,
+          username,
+          display_name,
+          avatar_url,
+          bio: '',
+          location: '',
+          website: '',
+          tech_stack: [],
+          followers_count: 0,
+          following_count: 0,
+          posts_count: 0,
+        }, { onConflict: 'id' })
+        .select()
+        .single();
+      newProfile = res.data;
+      createErr  = res.error;
+      // 23505 = unique_violation (username taken); retry with suffix
+      if (!createErr || createErr.code !== '23505') break;
+    }
 
     if (createErr) {
       console.error('[Devit] Failed to create profile:', createErr);
