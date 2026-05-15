@@ -704,6 +704,8 @@ async function initAuth() {
       _syncPending = false;
     }
 
+  }); // end onAuthStateChange
+
   // ── getSession() on page load ─────────────────────────────────
   // Resolves instantly from localStorage (no network call) for
   // returning users. For OAuth redirects, Supabase already parsed
