@@ -12,12 +12,10 @@ const sb = createClient(
   window.DEVIT_CONFIG.SUPABASE_ANON_KEY,
   {
     auth: {
-      detectSessionInUrl: true,   // parse tokens from URL on redirect
+      detectSessionInUrl: true,   // Parses #access_token from URL hash on redirect
       persistSession: true,
       autoRefreshToken: true,
-      flowType: 'implicit',       // Implicit flow puts tokens in the hash (#access_token=...)
-                                  // instead of ?code= — required for GitHub Pages hash routing
-                                  // since ?code= gets appended BEFORE the # and causes a 404.
+      flowType: 'implicit',      // Hash-based (#access_token=...) — works on all browsers
     }
   }
 );
@@ -519,44 +517,66 @@ async function initAuth() {
     if (span) span.textContent = text;
   }
 
+  // ── OAuth redirect overlay ────────────────────────────────────
+  // On mobile the page navigates away for OAuth. Show a full-screen
+  // "Redirecting…" overlay so the user doesn't tap twice or think it froze.
+  function showOAuthRedirectOverlay(providerName) {
+    let ov = document.getElementById('oauth-redirect-overlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'oauth-redirect-overlay';
+      ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:var(--bg-void,#050508);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;font-family:var(--font-body,sans-serif)';
+      ov.innerHTML = `
+        <svg width="36" height="36" viewBox="0 0 36 36" style="animation:spin 0.9s linear infinite"><circle cx="18" cy="18" r="14" fill="none" stroke="var(--cyan,#63d9ff)" stroke-width="3" stroke-dasharray="60 30" stroke-linecap="round"/></svg>
+        <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+        <div style="font-size:15px;font-weight:600;color:var(--text-primary,#f0f2ff)">Redirecting to ${providerName}…</div>
+        <div style="font-size:12px;color:var(--text-muted,#4a5070)">You'll be brought back automatically</div>`;
+      document.body.appendChild(ov);
+    }
+    ov.style.display = 'flex';
+  }
+
   // ── GitHub OAuth ─────────────────────────────────────────────
   githubBtn.addEventListener('click', async () => {
     setOAuthBtnLoading(githubBtn, 'Connecting…');
-    // Reset button after 8 s in case the redirect is blocked (popup blocker / CSP).
-    const githubResetTimer = setTimeout(() => resetOAuthBtn(githubBtn, 'Continue with GitHub'), 8000);
+    showOAuthRedirectOverlay('GitHub');
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'github',
-      options: { redirectTo: 'https://suprosmith-coder.github.io/csc/' }
+      options: {
+        redirectTo: window.DEVIT_CONFIG.SITE_URL,
+        skipBrowserRedirect: false,  // always do a full page redirect (mobile-safe)
+      }
     });
     if (error) {
-      clearTimeout(githubResetTimer);
+      const ov = document.getElementById('oauth-redirect-overlay');
+      if (ov) ov.style.display = 'none';
       setAuthStatus('GitHub sign-in failed: ' + error.message, true);
       resetOAuthBtn(githubBtn, 'Continue with GitHub');
     }
-    // On success the browser is redirected — no further JS runs here.
+    // On success the browser navigates away — no further JS runs here.
   });
 
   // ── Google OAuth ─────────────────────────────────────────────
   // access_type:'offline' + prompt:'consent' ensures a refresh_token
   // is issued even on re-auth, which Supabase needs for silent renewal.
-  // (Ported from Cyanix AI signInOAuth('google'))
   googleBtn.addEventListener('click', async () => {
     setOAuthBtnLoading(googleBtn, 'Connecting…');
-    // Reset button after 8 s in case the redirect is blocked (popup blocker / CSP).
-    const googleResetTimer = setTimeout(() => resetOAuthBtn(googleBtn, 'Continue with Google'), 8000);
+    showOAuthRedirectOverlay('Google');
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: 'https://suprosmith-coder.github.io/csc/',
+        redirectTo: window.DEVIT_CONFIG.SITE_URL,
+        skipBrowserRedirect: false,  // always do a full page redirect (mobile-safe)
         queryParams: { access_type: 'offline', prompt: 'consent' },
       }
     });
     if (error) {
-      clearTimeout(googleResetTimer);
+      const ov = document.getElementById('oauth-redirect-overlay');
+      if (ov) ov.style.display = 'none';
       setAuthStatus('Google sign-in failed: ' + error.message, true);
       resetOAuthBtn(googleBtn, 'Continue with Google');
     }
-    // On success the browser is redirected — no further JS runs here.
+    // On success the browser navigates away — no further JS runs here.
   });
 
   // ── Email sign-in (with rate limiting) ───────────────────────
@@ -727,10 +747,9 @@ async function initAuth() {
     try {
     // Clean OAuth tokens from the URL bar so back-button and
     // copy-pasting the URL don't expose or re-trigger tokens.
-    // Handles both PKCE flow (?code=) and implicit flow (#access_token).
+    // Implicit flow: tokens arrive in hash (#access_token=...) — strip it after Supabase parses it.
     try {
       // Implicit flow: tokens arrive in the hash (#access_token=...).
-      // Clear the hash after Supabase has parsed it so the URL is clean.
       const url = new URL(window.location.href);
       const hasOAuthHash = url.hash && (url.hash.includes('access_token') || url.hash.includes('refresh_token'));
       if (hasOAuthHash) {
@@ -770,11 +789,33 @@ async function initAuth() {
   }); // end onAuthStateChange
 
   // ── getSession() on page load ─────────────────────────────────
-  // Resolves instantly from localStorage (no network call) for
-  // returning users. For OAuth redirects, Supabase already parsed
-  // the token via detectSessionInUrl before this runs — it fires
-  // onAuthStateChange(SIGNED_IN) automatically, so we don't act here.
-  await sb.auth.getSession();
+  // For returning users: resolves instantly from localStorage.
+  // For OAuth redirects: Supabase parses #access_token from the hash
+  // via detectSessionInUrl and fires onAuthStateChange(SIGNED_IN).
+  //
+  // MOBILE FIX: On iOS Safari, the browser can reload the page after
+  // the OAuth redirect in a way that fires hashchange BEFORE DOMContentLoaded.
+  // We also listen for hashchange so we never miss a late-arriving hash token.
+  // Additionally, if the hash contains a token right now (e.g. the page was
+  // navigated to with a token already in the hash), call getSession explicitly
+  // to force Supabase to parse it — some mobile WebViews don't fire the event.
+  const _hash = window.location.hash;
+  if (_hash && (_hash.includes('access_token') || _hash.includes('refresh_token'))) {
+    // Hash is present on load — force a session parse.
+    // Supabase's detectSessionInUrl will pick it up; getSession flushes it.
+    await sb.auth.getSession();
+  } else {
+    await sb.auth.getSession();
+  }
+
+  // Belt-and-suspenders: also catch any hash that arrives after page load
+  // (some Android WebViews deliver it asynchronously).
+  window.addEventListener('hashchange', async () => {
+    const h = window.location.hash;
+    if (h && (h.includes('access_token') || h.includes('refresh_token'))) {
+      await sb.auth.getSession();
+    }
+  });
   // If no session exists, auth screen stays visible (shown by default in HTML).
 }
 
