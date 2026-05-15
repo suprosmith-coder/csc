@@ -1393,7 +1393,7 @@ async function loadPosts(container) {
   let query = sb
     .from('posts')
     .select(`
-      id, content, code_block, code_lang, likes_count, comments_count, reposts_count, created_at,
+      id, content, code_block, code_lang, image_url, likes_count, comments_count, reposts_count, created_at,
       profiles!posts_author_id_fkey(id, username, display_name, avatar_url)
     `)
     .order('created_at', { ascending: false })
@@ -2730,7 +2730,7 @@ async function loadProfilePosts(container, userId) {
   container.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted)">Loading…</div>`;
   const { data: posts } = await sb
     .from('posts')
-    .select('id, content, code_block, code_lang, likes_count, comments_count, reposts_count, created_at, profiles!posts_author_id_fkey(id, username, display_name, avatar_url)')
+    .select('id, content, code_block, code_lang, image_url, likes_count, comments_count, reposts_count, created_at, profiles!posts_author_id_fkey(id, username, display_name, avatar_url)')
     .eq('author_id', userId)
     .order('created_at', { ascending: false });
 
@@ -2824,7 +2824,7 @@ async function renderBookmarks(main) {
 
   const { data: bookmarks } = await sb
     .from('bookmarks')
-    .select('post_id, posts(id, content, code_block, code_lang, likes_count, comments_count, created_at, profiles!posts_author_id_fkey(id, username, display_name, avatar_url))')
+    .select('post_id, posts(id, content, code_block, code_lang, image_url, likes_count, comments_count, created_at, profiles!posts_author_id_fkey(id, username, display_name, avatar_url))')
     .eq('user_id', State.user.id)
     .order('created_at', { ascending: false });
 
