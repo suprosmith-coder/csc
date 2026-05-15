@@ -461,7 +461,7 @@ async function initAuth() {
     const githubResetTimer = setTimeout(() => resetOAuthBtn(githubBtn, 'Continue with GitHub'), 8000);
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'github',
-      options: { redirectTo: window.DEVIT_CONFIG.SITE_URL }
+      options: { redirectTo: 'https://suprosmith-coder.github.io/csc/#' }
     });
     if (error) {
       clearTimeout(githubResetTimer);
@@ -482,7 +482,7 @@ async function initAuth() {
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.DEVIT_CONFIG.SITE_URL,
+        redirectTo: 'https://suprosmith-coder.github.io/csc/#',
         queryParams: { access_type: 'offline', prompt: 'consent' },
       }
     });
@@ -527,7 +527,7 @@ async function initAuth() {
     signupBtn.disabled = true;
     const { error } = await sb.auth.signUp({
       email, password: pass,
-      options: { emailRedirectTo: window.DEVIT_CONFIG.SITE_URL }
+      options: { emailRedirectTo: 'https://suprosmith-coder.github.io/csc/#' }
     });
     if (error) {
       setAuthStatus(error.message, true);
@@ -548,7 +548,7 @@ async function initAuth() {
     magicBtn.disabled = true;
     const { error } = await sb.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: window.DEVIT_CONFIG.SITE_URL }
+      options: { emailRedirectTo: 'https://suprosmith-coder.github.io/csc/#' }
     });
     if (error) {
       setAuthStatus(error.message, true);
@@ -567,7 +567,7 @@ async function initAuth() {
       forgotBtn.textContent = 'Sending…';
       forgotBtn.disabled = true;
       const { error } = await sb.auth.resetPasswordForEmail(email, {
-        redirectTo: window.DEVIT_CONFIG.SITE_URL
+        redirectTo: 'https://suprosmith-coder.github.io/csc/#'
       });
       if (!error) setAuthStatus('<i class="fa-solid fa-envelope" style="margin-right:6px"></i>Password reset email sent! Check your inbox.');
       else setAuthStatus(error.message, true);
@@ -776,6 +776,9 @@ function openChangePasswordModal() {
     }
   });
 }
+
+/* ── Ensure Profile ─────────────────────────────────────────── */
+async function ensureProfile(authUser) {
   let { data: profile, error } = await sb
     .from('profiles')
     .select('*')
@@ -2812,7 +2815,7 @@ function renderSettings(main) {
     await sb.auth.signOut();
   });
   $('#settings-change-pass').addEventListener('click', async () => {
-    const { error } = await sb.auth.resetPasswordForEmail(State.user.email, { redirectTo: window.DEVIT_CONFIG.SITE_URL });
+    const { error } = await sb.auth.resetPasswordForEmail(State.user.email, { redirectTo: 'https://suprosmith-coder.github.io/csc/#' });
     if (!error) toast('Password reset email sent!', 'envelope');
     else toast('Error: ' + error.message, 'circle-exclamation');
   });
