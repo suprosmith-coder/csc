@@ -3932,13 +3932,86 @@ function openProfileEditModal(profile) {
   });
 }
 
+/* ── Mobile UI Layout Drawer Controllers ────────────────────── */
+function initMobileNavigation() {
+  const sidebar = document.getElementById('sidebar');
+  const rightbar = document.getElementById('rightbar');
+  const overlay = document.getElementById('layout-blur-overlay');
+
+  function closeAllDrawers() {
+    sidebar?.classList.remove('open');
+    rightbar?.classList.remove('open');
+    overlay?.classList.remove('active');
+  }
+
+  // Inject hamburger button into topbar if not already present
+  const topbar = document.getElementById('topbar');
+  if (topbar && !document.getElementById('mobile-sidebar-toggle')) {
+    const hambBtn = document.createElement('button');
+    hambBtn.id = 'mobile-sidebar-toggle';
+    hambBtn.className = 'topbar-mobile-sidebar-btn';
+    hambBtn.setAttribute('aria-label', 'Toggle Navigation');
+    hambBtn.innerHTML = '<i class="fa-solid fa-bars-staggered"></i>';
+    topbar.insertBefore(hambBtn, topbar.firstChild);
+  }
+
+  // Inject rightbar toggle into topbar actions if not already present
+  if (topbar && !document.getElementById('mobile-rightbar-toggle')) {
+    const rbBtn = document.createElement('button');
+    rbBtn.id = 'mobile-rightbar-toggle';
+    rbBtn.className = 'topbar-rightbar-toggle topbar-action-btn';
+    rbBtn.setAttribute('aria-label', 'Toggle Trending Panel');
+    rbBtn.innerHTML = '<i class="fa-solid fa-arrow-trend-up"></i>';
+    const actions = topbar.querySelector('.topbar-actions');
+    if (actions) actions.insertBefore(rbBtn, actions.firstChild);
+  }
+
+  const btnSidebarToggle = document.getElementById('mobile-sidebar-toggle');
+  const btnRightbarToggle = document.getElementById('mobile-rightbar-toggle');
+
+  btnSidebarToggle?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = sidebar?.classList.toggle('open');
+    rightbar?.classList.remove('open');
+    overlay?.classList.toggle('active', !!isOpen);
+  });
+
+  btnRightbarToggle?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = rightbar?.classList.toggle('open');
+    sidebar?.classList.remove('open');
+    overlay?.classList.toggle('active', !!isOpen);
+  });
+
+  // Tap background overlay to dismiss drawers
+  overlay?.addEventListener('click', closeAllDrawers);
+
+  // Close drawers when sidebar/bottom-nav links are clicked
+  document.addEventListener('click', (e) => {
+    const link = e.target.closest('.sidebar-link, .sidebar-community, .bnav-btn');
+    if (link) closeAllDrawers();
+  });
+
+  // Connect mobile FAB to composer focus
+  const fab = document.getElementById('mobile-fab');
+  fab?.addEventListener('click', () => {
+    const mainComposer = document.querySelector('.composer-textarea');
+    mainComposer?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => mainComposer?.focus(), 300);
+  });
+}
+
 /* ── Boot ───────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   initAuth();
+  initMobileNavigation();
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       document.getElementById('modal-overlay')?.classList.remove('open');
+      document.getElementById('layout-blur-overlay')?.classList.remove('active');
+      document.getElementById('sidebar')?.classList.remove('open');
+      document.getElementById('rightbar')?.classList.remove('open');
       closeSearch();
     }
   });
