@@ -361,6 +361,7 @@ create table if not exists snippets (
   video_url text not null,
   caption text default '',
   hearts_count int default 0,
+  comments_count int default 0,
   duration int default 0,
   created_at timestamptz default now()
 );
@@ -1460,11 +1461,19 @@ async function loadTrendingTags() {
 const GlobalSubs = []; // presence channel, etc.
 
 function navigateTo(view) {
+  // Clean up snippets full-screen overlay if leaving snippets view
+  const existingSnippetsContainer = document.getElementById('snippets-container');
+  if (existingSnippetsContainer) {
+    document.querySelectorAll('.snip-video').forEach(v => v.pause());
+    existingSnippetsContainer.remove();
+  }
+
   State.currentView = view;
   showPresence();
   updateSidebarActive();
   updateBottomNavActive(view);
   const main = $('#main');
+  main.style.cssText = ''; // reset any inline styles set by snippets view
   main.innerHTML = '';
   closeSearch();
 
@@ -3179,24 +3188,72 @@ function openProfileQuickView(userId) {
   });
 }
 
-/* ── Snippets (short video feed) ────────────────────────────── */
+/* ── Snippets — TikTok/Shorts style full-screen snap feed ────── */
+
+// Global mute state shared across all snippet cards
+let _snippetsMuted = true;
+
 function renderSnippets(main) {
+  // Full-screen takeover: hide topbar/sidebar while in snippets view
+  main.style.cssText = 'padding:0;max-width:none;';
+
   main.innerHTML = `
-    <div class="view-tabs">
-      <div class="view-tab active">Snippets</div>
-      <div class="view-tab" id="snippets-upload-tab" style="margin-left:auto;cursor:pointer;color:var(--cyan)"><i class="fa-solid fa-plus"></i> Post Snippet</div>
+    <div id="snippets-container" style="
+      position:fixed;inset:0;z-index:200;background:#000;
+      overflow-y:scroll;scroll-snap-type:y mandatory;
+      scrollbar-width:none;-ms-overflow-style:none;
+    ">
+      <style>#snippets-container::-webkit-scrollbar{display:none}</style>
+      <div id="snippets-feed" style="width:100%;"></div>
     </div>
-    <div id="snippets-feed" class="snippets-feed">
-      <div style="padding:32px;text-align:center;color:var(--text-muted)">Loading Snippets…</div>
+
+    <!-- Top bar overlay -->
+    <div style="position:fixed;top:0;left:0;right:0;z-index:210;
+      display:flex;align-items:center;justify-content:space-between;
+      padding:12px 16px;
+      background:linear-gradient(to bottom,rgba(0,0,0,0.6) 0%,transparent 100%);
+      pointer-events:none;">
+      <div style="pointer-events:auto">
+        <button id="snippets-back-btn" style="background:rgba(0,0,0,0.4);border:none;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px)">
+          <i class="fa-solid fa-arrow-left"></i>
+        </button>
+      </div>
+      <div style="font-size:15px;font-weight:700;color:#fff;letter-spacing:0.02em">Snippets</div>
+      <div style="pointer-events:auto;display:flex;gap:8px;align-items:center">
+        <button id="snippets-mute-btn" style="background:rgba(0,0,0,0.4);border:none;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px)">
+          <i class="fa-solid fa-volume-xmark"></i>
+        </button>
+        <button id="snippets-post-btn" style="background:var(--cyan,#63d9ff);border:none;color:#000;height:32px;padding:0 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px">
+          <i class="fa-solid fa-plus"></i> Post
+        </button>
+      </div>
     </div>
   `;
 
-  document.getElementById('snippets-upload-tab').addEventListener('click', openSnippetUploadModal);
-  loadSnippets($('#snippets-feed'));
+  // Back button exits snippets view
+  document.getElementById('snippets-back-btn').addEventListener('click', () => {
+    main.style.cssText = '';
+    // Pause all videos before leaving
+    document.querySelectorAll('.snip-video').forEach(v => v.pause());
+    navigateTo('feed');
+  });
+
+  // Global mute toggle
+  const muteBtn = document.getElementById('snippets-mute-btn');
+  muteBtn.addEventListener('click', () => {
+    _snippetsMuted = !_snippetsMuted;
+    muteBtn.innerHTML = _snippetsMuted
+      ? '<i class="fa-solid fa-volume-xmark"></i>'
+      : '<i class="fa-solid fa-volume-high"></i>';
+    document.querySelectorAll('.snip-video').forEach(v => { v.muted = _snippetsMuted; });
+  });
+
+  document.getElementById('snippets-post-btn').addEventListener('click', openSnippetUploadModal);
+
+  loadSnippets(document.getElementById('snippets-feed'));
 }
 
 async function loadSnippets(container) {
-  // Algorithm: recent + popular (weighted by hearts + follows)
   const { data: snippets } = await sb
     .from('snippets')
     .select('*, profiles!snippets_author_id_fkey(id, username, display_name, avatar_url)')
@@ -3205,10 +3262,10 @@ async function loadSnippets(container) {
 
   if (!snippets?.length) {
     container.innerHTML = `
-      <div style="padding:60px 20px;text-align:center">
-        <div style="font-size:48px;margin-bottom:16px">🎬</div>
-        <div style="font-family:var(--font-display);font-size:20px;font-weight:800;margin-bottom:8px">No Snippets Yet</div>
-        <div style="color:var(--text-muted);font-size:14px">Be the first to post a 30-second Snippet!</div>
+      <div style="height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;color:#fff">
+        <div style="font-size:56px">🎬</div>
+        <div style="font-size:20px;font-weight:800">No Snippets Yet</div>
+        <div style="font-size:14px;opacity:0.6">Be the first to post one!</div>
       </div>`;
     return;
   }
@@ -3218,90 +3275,262 @@ async function loadSnippets(container) {
 }
 
 function buildSnippetCard(snippet) {
-  const card = el('div', 'snippet-card');
+  const card = document.createElement('div');
+  card.style.cssText = `
+    position:relative;width:100%;height:100vh;
+    scroll-snap-align:start;scroll-snap-stop:always;
+    overflow:hidden;background:#000;flex-shrink:0;
+  `;
+
   const color = avatarColor(snippet.profiles?.display_name || snippet.profiles?.username || '?');
+  const username = escapeHtml(snippet.profiles?.username || '?');
+  const displayName = escapeHtml(snippet.profiles?.display_name || snippet.profiles?.username || '?');
+  const avatarContent = snippet.profiles?.avatar_url
+    ? `<img src="${escapeHtml(snippet.profiles.avatar_url)}" style="width:100%;height:100%;object-fit:cover">`
+    : avatarInitials(snippet.profiles?.display_name || snippet.profiles?.username || 'U');
+
   card.innerHTML = `
-    <div class="snippet-video-wrap">
-      <video class="snippet-video" src="${escapeHtml(snippet.video_url || '')}" loop playsinline muted preload="metadata"></video>
-      <div class="snippet-overlay">
-        <div class="snippet-actions-side">
-          <button class="snippet-action-btn snippet-heart-btn" data-sid="${snippet.id}">
-            <i class="fa-solid fa-heart"></i>
-            <span class="snippet-heart-count">${fmtNum(snippet.hearts_count || 0)}</span>
-          </button>
-          <button class="snippet-action-btn snippet-bookmark-btn" data-sid="${snippet.id}">
-            <i class="fa-solid fa-bookmark"></i>
-          </button>
-          <button class="snippet-action-btn snippet-share-btn" data-sid="${snippet.id}">
-            <i class="fa-solid fa-share-nodes"></i>
-          </button>
+    <!-- Video -->
+    <video class="snip-video" src="${escapeHtml(snippet.video_url || '')}"
+      loop playsinline preload="metadata"
+      style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;">
+    </video>
+
+    <!-- Gradient overlays -->
+    <div style="position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,0.75) 0%,transparent 50%,transparent 80%,rgba(0,0,0,0.2) 100%);pointer-events:none"></div>
+
+    <!-- Tap to play/pause hit zone -->
+    <div class="snip-tap-zone" style="position:absolute;inset:0;z-index:1"></div>
+
+    <!-- Play/pause icon (center flash) -->
+    <div class="snip-playpause-flash" style="
+      position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+      width:72px;height:72px;border-radius:50%;
+      background:rgba(0,0,0,0.5);backdrop-filter:blur(4px);
+      display:flex;align-items:center;justify-content:center;
+      font-size:28px;color:#fff;opacity:0;z-index:2;
+      transition:opacity 0.15s;pointer-events:none;">
+      <i class="fa-solid fa-play"></i>
+    </div>
+
+    <!-- Progress bar -->
+    <div style="position:absolute;top:0;left:0;right:0;height:2px;background:rgba(255,255,255,0.2);z-index:3">
+      <div class="snip-progress" style="height:100%;background:var(--cyan,#63d9ff);width:0%;transition:width 0.1s linear"></div>
+    </div>
+
+    <!-- Right action column -->
+    <div style="position:absolute;right:12px;bottom:90px;z-index:4;display:flex;flex-direction:column;align-items:center;gap:20px;">
+
+      <!-- Avatar with follow ring -->
+      <div style="position:relative;margin-bottom:4px">
+        <div class="snip-avatar-btn" data-uid="${snippet.profiles?.id || ''}" style="
+          width:48px;height:48px;border-radius:50%;background:${color};
+          display:flex;align-items:center;justify-content:center;
+          font-weight:700;font-size:16px;color:#fff;overflow:hidden;
+          border:2px solid #fff;cursor:pointer;flex-shrink:0;">
+          ${avatarContent}
         </div>
-        <div class="snippet-info">
-          <div class="snippet-author" data-uid="${snippet.profiles?.id || ''}">
-            <div style="width:36px;height:36px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff;overflow:hidden;border:2px solid rgba(255,255,255,0.3);flex-shrink:0">
-              ${snippet.profiles?.avatar_url ? `<img src="${escapeHtml(snippet.profiles.avatar_url)}" style="width:100%;height:100%;object-fit:cover">` : avatarInitials(snippet.profiles?.display_name || snippet.profiles?.username || 'U')}
-            </div>
-            <div>
-              <div style="font-weight:700;font-size:13px;color:#fff">@${escapeHtml(snippet.profiles?.username || '?')}</div>
-            </div>
-          </div>
-          ${snippet.caption ? `<div class="snippet-caption">${escapeHtml(snippet.caption)}</div>` : ''}
+        <div style="
+          position:absolute;bottom:-8px;left:50%;transform:translateX(-50%);
+          width:20px;height:20px;border-radius:50%;background:var(--rose,#fb7185);
+          display:flex;align-items:center;justify-content:center;
+          font-size:10px;color:#fff;border:2px solid #000;cursor:pointer;"
+          class="snip-follow-dot" data-uid="${snippet.profiles?.id || ''}">
+          <i class="fa-solid fa-plus"></i>
         </div>
       </div>
-      <div class="snippet-play-icon"><i class="fa-solid fa-play"></i></div>
+
+      <!-- Heart -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+        <button class="snip-heart-btn" style="
+          background:none;border:none;color:#fff;font-size:28px;cursor:pointer;
+          padding:6px;transition:transform 0.2s;">
+          <i class="fa-solid fa-heart"></i>
+        </button>
+        <span class="snip-heart-count" style="color:#fff;font-size:12px;font-weight:700">${fmtNum(snippet.hearts_count || 0)}</span>
+      </div>
+
+      <!-- Comment (visual only for now) -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+        <button class="snip-comment-btn" style="background:none;border:none;color:#fff;font-size:26px;cursor:pointer;padding:6px">
+          <i class="fa-solid fa-comment-dots"></i>
+        </button>
+        <span style="color:#fff;font-size:12px;font-weight:700">${fmtNum(snippet.comments_count || 0)}</span>
+      </div>
+
+      <!-- Bookmark -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+        <button class="snip-bookmark-btn" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;padding:6px">
+          <i class="fa-solid fa-bookmark"></i>
+        </button>
+      </div>
+
+      <!-- Share -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+        <button class="snip-share-btn" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;padding:6px">
+          <i class="fa-solid fa-share-nodes"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Bottom info -->
+    <div style="position:absolute;left:0;right:72px;bottom:16px;z-index:4;padding:0 16px">
+      <div class="snip-author-info" data-uid="${snippet.profiles?.id || ''}" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
+        <div style="font-size:14px;font-weight:700;color:#fff">@${username}</div>
+      </div>
+      ${snippet.caption ? `
+        <div style="font-size:13px;color:rgba(255,255,255,0.9);line-height:1.5;
+          display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">
+          ${escapeHtml(snippet.caption).replace(/#(\w+)/g,'<span style="color:var(--cyan,#63d9ff)">#$1</span>')}
+        </div>` : ''}
+      <div style="margin-top:6px;display:flex;align-items:center;gap:6px">
+        <i class="fa-solid fa-music" style="font-size:11px;color:rgba(255,255,255,0.6)"></i>
+        <div style="font-size:11px;color:rgba(255,255,255,0.6)">${displayName} · Original audio</div>
+      </div>
     </div>
   `;
 
-  const video = card.querySelector('.snippet-video');
-  const playIcon = card.querySelector('.snippet-play-icon');
+  const video     = card.querySelector('.snip-video');
+  const flash     = card.querySelector('.snip-playpause-flash');
+  const progress  = card.querySelector('.snip-progress');
+  const tapZone   = card.querySelector('.snip-tap-zone');
 
-  // Play/pause on click
-  card.querySelector('.snippet-video-wrap').addEventListener('click', e => {
-    if (e.target.closest('.snippet-actions-side') || e.target.closest('.snippet-author')) return;
-    if (video.paused) { video.play(); playIcon.style.opacity = '0'; }
-    else { video.pause(); playIcon.style.opacity = '1'; }
+  // Sync video mute state with global mute
+  video.muted = _snippetsMuted;
+
+  // Progress bar
+  video.addEventListener('timeupdate', () => {
+    if (video.duration) progress.style.width = ((video.currentTime / video.duration) * 100) + '%';
   });
 
-  // Intersection observer for autoplay
+  // Tap to play/pause with flash animation
+  let _flashTimer;
+  tapZone.addEventListener('click', () => {
+    if (video.paused) {
+      video.play();
+      flash.querySelector('i').className = 'fa-solid fa-play';
+    } else {
+      video.pause();
+      flash.querySelector('i').className = 'fa-solid fa-pause';
+    }
+    flash.style.opacity = '1';
+    clearTimeout(_flashTimer);
+    _flashTimer = setTimeout(() => { flash.style.opacity = '0'; }, 600);
+  });
+
+  // Double-tap to heart (TikTok style)
+  let _lastTap = 0;
+  tapZone.addEventListener('click', () => {
+    const now = Date.now();
+    if (now - _lastTap < 300) {
+      // Double tap — trigger heart
+      card.querySelector('.snip-heart-btn').click();
+      // Show heart burst
+      const burst = document.createElement('div');
+      burst.innerHTML = '<i class="fa-solid fa-heart" style="color:var(--rose,#fb7185);font-size:80px"></i>';
+      burst.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scale(0);z-index:10;pointer-events:none;transition:transform 0.3s,opacity 0.3s';
+      card.appendChild(burst);
+      requestAnimationFrame(() => { burst.style.transform = 'translate(-50%,-50%) scale(1)'; burst.style.opacity = '1'; });
+      setTimeout(() => { burst.style.transform = 'translate(-50%,-50%) scale(1.4)'; burst.style.opacity = '0'; }, 300);
+      setTimeout(() => burst.remove(), 700);
+    }
+    _lastTap = now;
+  });
+
+  // Intersection observer — autoplay when in view, pause when not
   const obs = new IntersectionObserver(entries => {
     entries.forEach(entry => {
-      if (entry.isIntersecting) { video.play(); playIcon.style.opacity = '0'; }
-      else { video.pause(); }
+      if (entry.isIntersecting) {
+        video.muted = _snippetsMuted; // sync mute on each entry
+        video.play().catch(() => {
+          // Autoplay blocked — show play icon
+          flash.querySelector('i').className = 'fa-solid fa-play';
+          flash.style.opacity = '1';
+        });
+      } else {
+        video.pause();
+        video.currentTime = 0;
+        progress.style.width = '0%';
+      }
     });
-  }, { threshold: 0.6 });
+  }, { threshold: 0.7 });
   obs.observe(card);
 
-  // PFP click
-  card.querySelector('.snippet-author').addEventListener('click', e => {
-    e.stopPropagation();
-    const uid = card.querySelector('.snippet-author').dataset.uid;
-    if (uid) openProfileQuickView(uid);
+  // Avatar / author click
+  card.querySelectorAll('.snip-avatar-btn, .snip-author-info').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      const uid = el.dataset.uid;
+      if (uid) openProfileQuickView(uid);
+    });
   });
 
-  // Heart
-  card.querySelector('.snippet-heart-btn').addEventListener('click', async e => {
+  // Follow dot
+  card.querySelector('.snip-follow-dot').addEventListener('click', async e => {
     e.stopPropagation();
-    const btn = e.currentTarget;
-    const countEl = btn.querySelector('.snippet-heart-count');
-    const { data: existing } = await sb.from('snippet_hearts').select('id').eq('snippet_id', snippet.id).eq('user_id', State.user.id).single();
-    if (existing) {
-      await sb.from('snippet_hearts').delete().eq('id', existing.id);
-      btn.querySelector('i').style.color = '';
-      countEl.textContent = fmtNum(Math.max(0, (parseInt(countEl.textContent) || 1) - 1));
-    } else {
-      await sb.from('snippet_hearts').insert({ snippet_id: snippet.id, user_id: State.user.id });
-      btn.querySelector('i').style.color = 'var(--rose)';
-      countEl.textContent = fmtNum((parseInt(countEl.textContent) || 0) + 1);
-      btn.style.transform = 'scale(1.4)'; setTimeout(() => btn.style.transform = '', 250);
+    const uid = e.currentTarget.dataset.uid;
+    if (!uid || uid === State.user.id) return;
+    const { error } = await sb.from('follows').insert({ follower_id: State.user.id, following_id: uid });
+    if (!error) {
+      e.currentTarget.innerHTML = '<i class="fa-solid fa-check"></i>';
+      e.currentTarget.style.background = 'var(--emerald,#34d399)';
+      await sb.rpc('increment_followers', { target_user_id: uid });
+      await sb.rpc('increment_following', { target_user_id: State.user.id });
+      await sb.from('notifications').insert({ user_id: uid, actor_id: State.user.id, type: 'follow' });
+      toast('Followed!', 'user-check');
     }
   });
 
-  // Bookmark
-  card.querySelector('.snippet-bookmark-btn').addEventListener('click', async e => {
+  // Heart
+  let _hearted = false;
+  const heartBtn   = card.querySelector('.snip-heart-btn');
+  const heartCount = card.querySelector('.snip-heart-count');
+  heartBtn.addEventListener('click', async e => {
     e.stopPropagation();
+    _hearted = !_hearted;
+    heartBtn.querySelector('i').style.color = _hearted ? 'var(--rose,#fb7185)' : '#fff';
+    heartBtn.style.transform = 'scale(1.3)';
+    setTimeout(() => { heartBtn.style.transform = ''; }, 200);
+    const cur = parseInt(heartCount.textContent) || 0;
+    heartCount.textContent = fmtNum(_hearted ? cur + 1 : Math.max(0, cur - 1));
+    if (_hearted) {
+      await sb.from('snippet_hearts').insert({ snippet_id: snippet.id, user_id: State.user.id });
+    } else {
+      const { data: existing } = await sb.from('snippet_hearts').select('id').eq('snippet_id', snippet.id).eq('user_id', State.user.id).single();
+      if (existing) await sb.from('snippet_hearts').delete().eq('id', existing.id);
+    }
+  });
+
+  // Check if already hearted
+  sb.from('snippet_hearts').select('id').eq('snippet_id', snippet.id).eq('user_id', State.user.id).single().then(({ data }) => {
+    if (data) { _hearted = true; heartBtn.querySelector('i').style.color = 'var(--rose,#fb7185)'; }
+  });
+
+  // Bookmark
+  card.querySelector('.snip-bookmark-btn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const btn = e.currentTarget;
     const { data: existing } = await sb.from('snippet_bookmarks').select('id').eq('snippet_id', snippet.id).eq('user_id', State.user.id).single();
-    if (existing) { await sb.from('snippet_bookmarks').delete().eq('id', existing.id); toast('Removed from bookmarks', 'bookmark'); }
-    else { await sb.from('snippet_bookmarks').insert({ snippet_id: snippet.id, user_id: State.user.id }); toast('Snippet bookmarked!', 'bookmark'); }
+    if (existing) {
+      await sb.from('snippet_bookmarks').delete().eq('id', existing.id);
+      btn.querySelector('i').style.color = '#fff';
+      toast('Removed from bookmarks', 'bookmark');
+    } else {
+      await sb.from('snippet_bookmarks').insert({ snippet_id: snippet.id, user_id: State.user.id });
+      btn.querySelector('i').style.color = 'var(--cyan,#63d9ff)';
+      toast('Snippet bookmarked!', 'bookmark');
+    }
+  });
+
+  // Share
+  card.querySelector('.snip-share-btn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const url = snippet.video_url;
+    if (navigator.share) {
+      try { await navigator.share({ title: `@${username} on Devit`, url }); } catch (_) {}
+    } else {
+      navigator.clipboard?.writeText(url).then(() => toast('Video link copied!', 'link'));
+    }
   });
 
   return card;
