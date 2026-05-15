@@ -3571,12 +3571,32 @@ function openSnippetUploadModal() {
   const postBtn    = document.getElementById('snippet-post-btn');
   let selectedFile = null;
 
+  const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska'];
+
+  function validateVideoFile(file) {
+    if (!file) return false;
+    if (!file.type.startsWith('video/') || !ALLOWED_VIDEO_TYPES.includes(file.type)) {
+      toast(`Unsupported file type: ${file.type || 'unknown'}. Please upload a video (MP4, WebM, MOV).`, 'circle-exclamation');
+      return false;
+    }
+    return true;
+  }
+
   dropZone.addEventListener('click', () => fileInput.click());
   dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--cyan)'; });
   dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--border)'; });
-  dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--border)'; const f = e.dataTransfer.files[0]; if (f && f.type.startsWith('video/')) handleSnippetFile(f); });
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.style.borderColor = 'var(--border)';
+    const f = e.dataTransfer.files[0];
+    if (f && validateVideoFile(f)) handleSnippetFile(f);
+  });
 
-  fileInput.addEventListener('change', () => { const f = fileInput.files[0]; if (f) handleSnippetFile(f); });
+  fileInput.addEventListener('change', () => {
+    const f = fileInput.files[0];
+    if (f && validateVideoFile(f)) handleSnippetFile(f);
+    fileInput.value = '';
+  });
 
   function handleSnippetFile(file) {
     selectedFile = file;
@@ -3607,7 +3627,9 @@ function openSnippetUploadModal() {
     const ext = selectedFile.name.split('.').pop() || 'mp4';
     const path = `snippets/${State.user.id}/${Date.now()}.${ext}`;
 
-    const { error: uploadErr } = await sb.storage.from('snippets').upload(path, selectedFile, { contentType: selectedFile.type });
+    // Guarantee a video contentType — never let audio/mpeg or unknown types through
+    const safeContentType = selectedFile.type.startsWith('video/') ? selectedFile.type : 'video/mp4';
+    const { error: uploadErr } = await sb.storage.from('snippets').upload(path, selectedFile, { contentType: safeContentType });
     status.style.display = 'none';
 
     if (uploadErr) {
@@ -3932,86 +3954,13 @@ function openProfileEditModal(profile) {
   });
 }
 
-/* ── Mobile UI Layout Drawer Controllers ────────────────────── */
-function initMobileNavigation() {
-  const sidebar = document.getElementById('sidebar');
-  const rightbar = document.getElementById('rightbar');
-  const overlay = document.getElementById('layout-blur-overlay');
-
-  function closeAllDrawers() {
-    sidebar?.classList.remove('open');
-    rightbar?.classList.remove('open');
-    overlay?.classList.remove('active');
-  }
-
-  // Inject hamburger button into topbar if not already present
-  const topbar = document.getElementById('topbar');
-  if (topbar && !document.getElementById('mobile-sidebar-toggle')) {
-    const hambBtn = document.createElement('button');
-    hambBtn.id = 'mobile-sidebar-toggle';
-    hambBtn.className = 'topbar-mobile-sidebar-btn';
-    hambBtn.setAttribute('aria-label', 'Toggle Navigation');
-    hambBtn.innerHTML = '<i class="fa-solid fa-bars-staggered"></i>';
-    topbar.insertBefore(hambBtn, topbar.firstChild);
-  }
-
-  // Inject rightbar toggle into topbar actions if not already present
-  if (topbar && !document.getElementById('mobile-rightbar-toggle')) {
-    const rbBtn = document.createElement('button');
-    rbBtn.id = 'mobile-rightbar-toggle';
-    rbBtn.className = 'topbar-rightbar-toggle topbar-action-btn';
-    rbBtn.setAttribute('aria-label', 'Toggle Trending Panel');
-    rbBtn.innerHTML = '<i class="fa-solid fa-arrow-trend-up"></i>';
-    const actions = topbar.querySelector('.topbar-actions');
-    if (actions) actions.insertBefore(rbBtn, actions.firstChild);
-  }
-
-  const btnSidebarToggle = document.getElementById('mobile-sidebar-toggle');
-  const btnRightbarToggle = document.getElementById('mobile-rightbar-toggle');
-
-  btnSidebarToggle?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const isOpen = sidebar?.classList.toggle('open');
-    rightbar?.classList.remove('open');
-    overlay?.classList.toggle('active', !!isOpen);
-  });
-
-  btnRightbarToggle?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const isOpen = rightbar?.classList.toggle('open');
-    sidebar?.classList.remove('open');
-    overlay?.classList.toggle('active', !!isOpen);
-  });
-
-  // Tap background overlay to dismiss drawers
-  overlay?.addEventListener('click', closeAllDrawers);
-
-  // Close drawers when sidebar/bottom-nav links are clicked
-  document.addEventListener('click', (e) => {
-    const link = e.target.closest('.sidebar-link, .sidebar-community, .bnav-btn');
-    if (link) closeAllDrawers();
-  });
-
-  // Connect mobile FAB to composer focus
-  const fab = document.getElementById('mobile-fab');
-  fab?.addEventListener('click', () => {
-    const mainComposer = document.querySelector('.composer-textarea');
-    mainComposer?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setTimeout(() => mainComposer?.focus(), 300);
-  });
-}
-
 /* ── Boot ───────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   initAuth();
-  initMobileNavigation();
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       document.getElementById('modal-overlay')?.classList.remove('open');
-      document.getElementById('layout-blur-overlay')?.classList.remove('active');
-      document.getElementById('sidebar')?.classList.remove('open');
-      document.getElementById('rightbar')?.classList.remove('open');
       closeSearch();
     }
   });
