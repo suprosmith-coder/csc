@@ -1393,7 +1393,7 @@ async function loadPosts(container) {
   let query = sb
     .from('posts')
     .select(`
-      id, content, code_block, code_lang, image_url, likes_count, comments_count, reposts_count, created_at,
+      id, content, code_block, code_lang, image_url, file_url, file_name, likes_count, comments_count, reposts_count, created_at,
       profiles!posts_author_id_fkey(id, username, display_name, avatar_url)
     `)
     .order('created_at', { ascending: false })
@@ -1460,6 +1460,32 @@ function subscribeToNewPosts(container) {
 }
 
 /* ── Composer ───────────────────────────────────────────────── */
+const FILE_MAX_BYTES = 600 * 1024; // 600 KB
+
+const FILE_ICONS = {
+  'pdf':  'fa-file-pdf',
+  'doc':  'fa-file-word',  'docx': 'fa-file-word',
+  'xls':  'fa-file-excel', 'xlsx': 'fa-file-excel',
+  'ppt':  'fa-file-powerpoint', 'pptx': 'fa-file-powerpoint',
+  'zip':  'fa-file-zipper','rar':  'fa-file-zipper', '7z': 'fa-file-zipper',
+  'mp3':  'fa-file-audio', 'wav':  'fa-file-audio', 'ogg': 'fa-file-audio',
+  'mp4':  'fa-file-video', 'mov':  'fa-file-video', 'webm':'fa-file-video',
+  'txt':  'fa-file-lines', 'md':   'fa-file-lines',
+  'js':   'fa-file-code',  'ts':   'fa-file-code',  'py': 'fa-file-code',
+  'html': 'fa-file-code',  'css':  'fa-file-code',  'json':'fa-file-code',
+};
+
+function fileIcon(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return FILE_ICONS[ext] || 'fa-file';
+}
+
+function fmtBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
 function buildComposer(container) {
   const profile = State.profile;
   container.innerHTML = `
@@ -1469,7 +1495,7 @@ function buildComposer(container) {
         <textarea class="composer-textarea" id="post-textarea" placeholder="What are you building today?" rows="2"></textarea>
       </div>
       <pre class="composer-code-block" id="composer-code" spellcheck="false" contenteditable="false"></pre>
-      <div id="composer-img-preview" style="display:none;padding:0 0 8px 0;position:relative"></div>
+      <div id="composer-attach-preview" style="display:none;padding:0 0 8px 0"></div>
       <div class="composer-toolbar">
         <button class="composer-tool" id="add-code-btn" title="Add code block">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
@@ -1477,7 +1503,11 @@ function buildComposer(container) {
         <button class="composer-tool" title="Add image" id="composer-img-btn">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
         </button>
+        <button class="composer-tool" title="Attach file (max 600 KB)" id="composer-file-btn">
+          <i class="fa-solid fa-paperclip" style="font-size:14px"></i>
+        </button>
         <input type="file" id="composer-img-input" accept="image/*" style="display:none">
+        <input type="file" id="composer-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.js,.ts,.py,.html,.css,.json,.zip,.rar,.7z,.mp3,.wav,.ogg,.mp4,.mov,.webm" style="display:none">
         <div class="composer-actions">
           <span class="char-count" id="char-count">280</span>
           <button class="post-btn" id="post-submit-btn" disabled>Post</button>
@@ -1486,23 +1516,28 @@ function buildComposer(container) {
     </div>
   `;
 
-  const textarea   = $('#post-textarea');
-  const charCount  = $('#char-count');
-  const submitBtn  = $('#post-submit-btn');
-  const codeBlock  = $('#composer-code');
-  const addCodeBtn = $('#add-code-btn');
-  const imgBtn     = $('#composer-img-btn');
-  const imgInput   = $('#composer-img-input');
-  const imgPreview = $('#composer-img-preview');
+  const textarea    = $('#post-textarea');
+  const charCount   = $('#char-count');
+  const submitBtn   = $('#post-submit-btn');
+  const codeBlock   = $('#composer-code');
+  const addCodeBtn  = $('#add-code-btn');
+  const imgBtn      = $('#composer-img-btn');
+  const imgInput    = $('#composer-img-input');
+  const fileBtn     = $('#composer-file-btn');
+  const fileInput   = $('#composer-file-input');
+  const preview     = $('#composer-attach-preview');
   let hasCode = false;
   let codeLang = 'js';
   let selectedImageFile = null;
+  let selectedAttachFile = null;
+
+  const canPost = () => textarea.value.trim().length > 0 || selectedImageFile || selectedAttachFile;
 
   textarea.addEventListener('input', () => {
     const left = 280 - textarea.value.length;
     charCount.textContent = left;
     charCount.style.color = left < 20 ? 'var(--rose)' : left < 60 ? 'var(--amber)' : 'var(--text-muted)';
-    submitBtn.disabled = textarea.value.trim().length === 0 && !selectedImageFile;
+    submitBtn.disabled = !canPost();
   });
 
   addCodeBtn.addEventListener('click', () => {
@@ -1519,83 +1554,134 @@ function buildComposer(container) {
     }
   });
 
-  imgBtn.addEventListener('click', () => imgInput.click());
+  // ── Image picker ──
+  imgBtn.addEventListener('click', () => { selectedAttachFile = null; imgInput.click(); });
 
   imgInput.addEventListener('change', () => {
     const file = imgInput.files[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { toast('Image must be under 5MB', 'circle-exclamation'); imgInput.value = ''; return; }
+    if (file.size > FILE_MAX_BYTES) {
+      toast(`Image must be under ${fmtBytes(FILE_MAX_BYTES)}`, 'circle-exclamation');
+      imgInput.value = '';
+      return;
+    }
     selectedImageFile = file;
+    selectedAttachFile = null;
     const reader = new FileReader();
     reader.onload = e => {
-      imgPreview.style.display = 'block';
-      imgPreview.innerHTML = `
+      preview.style.display = 'block';
+      preview.innerHTML = `
         <div style="position:relative;display:inline-block">
           <img src="${e.target.result}" style="max-height:180px;max-width:100%;border-radius:10px;border:1px solid var(--border);object-fit:cover">
-          <button id="composer-img-remove" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.6);border:none;border-radius:50%;width:22px;height:22px;cursor:pointer;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-      `;
-      $('#composer-img-remove').addEventListener('click', () => {
-        selectedImageFile = null;
-        imgInput.value = '';
-        imgPreview.style.display = 'none';
-        imgPreview.innerHTML = '';
-        submitBtn.disabled = textarea.value.trim().length === 0;
-      });
-      submitBtn.disabled = false;
+          <button id="composer-attach-remove" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.65);border:none;border-radius:50%;width:22px;height:22px;cursor:pointer;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center"><i class="fa-solid fa-xmark"></i></button>
+        </div>`;
+      bindRemove();
+      submitBtn.disabled = !canPost();
     };
     reader.readAsDataURL(file);
   });
 
+  // ── File picker ──
+  fileBtn.addEventListener('click', () => { selectedImageFile = null; fileInput.click(); });
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    if (file.size > FILE_MAX_BYTES) {
+      toast(`File must be under ${fmtBytes(FILE_MAX_BYTES)}`, 'circle-exclamation');
+      fileInput.value = '';
+      return;
+    }
+    selectedAttachFile = file;
+    selectedImageFile = null;
+    const icon = fileIcon(file.name);
+    preview.style.display = 'block';
+    preview.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;max-width:320px">
+        <i class="fa-solid ${icon}" style="font-size:22px;color:var(--cyan);flex-shrink:0"></i>
+        <div style="min-width:0;flex:1">
+          <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(file.name)}</div>
+          <div style="font-size:11px;color:var(--text-muted)">${fmtBytes(file.size)}</div>
+        </div>
+        <button id="composer-attach-remove" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:4px;flex-shrink:0"><i class="fa-solid fa-xmark"></i></button>
+      </div>`;
+    bindRemove();
+    submitBtn.disabled = !canPost();
+  });
+
+  function bindRemove() {
+    $('#composer-attach-remove').addEventListener('click', () => {
+      selectedImageFile = null;
+      selectedAttachFile = null;
+      imgInput.value = '';
+      fileInput.value = '';
+      preview.style.display = 'none';
+      preview.innerHTML = '';
+      submitBtn.disabled = !canPost();
+    });
+  }
+
+  // ── Submit ──
   submitBtn.addEventListener('click', async () => {
-    const text = textarea.value.trim();
-    if (!text && !selectedImageFile) return;
+    if (!canPost()) return;
     submitBtn.disabled = true;
     submitBtn.textContent = 'Posting…';
 
     let imageUrl = null;
+    let fileUrl  = null;
+    let fileName = null;
+
     if (selectedImageFile) {
-      const ext = selectedImageFile.name.split('.').pop();
+      const ext  = selectedImageFile.name.split('.').pop();
       const path = `posts/${State.user.id}/${Date.now()}.${ext}`;
       const { error: uploadErr } = await sb.storage.from('post-images').upload(path, selectedImageFile, { contentType: selectedImageFile.type });
       if (uploadErr) {
         toast('Image upload failed: ' + uploadErr.message, 'circle-exclamation');
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Post';
-        return;
+        submitBtn.disabled = false; submitBtn.textContent = 'Post'; return;
       }
-      const { data: urlData } = sb.storage.from('post-images').getPublicUrl(path);
-      imageUrl = urlData.publicUrl;
+      imageUrl = sb.storage.from('post-images').getPublicUrl(path).data.publicUrl;
     }
 
-    const postData = {
-      author_id: State.user.id,
-      content: text || '',
-    };
-    if (imageUrl) postData.image_url = imageUrl;
+    if (selectedAttachFile) {
+      const ext  = selectedAttachFile.name.split('.').pop();
+      const path = `posts/${State.user.id}/${Date.now()}_${selectedAttachFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+      const { error: uploadErr } = await sb.storage.from('post-files').upload(path, selectedAttachFile, { contentType: selectedAttachFile.type });
+      if (uploadErr) {
+        toast('File upload failed: ' + uploadErr.message, 'circle-exclamation');
+        submitBtn.disabled = false; submitBtn.textContent = 'Post'; return;
+      }
+      fileUrl  = sb.storage.from('post-files').getPublicUrl(path).data.publicUrl;
+      fileName = selectedAttachFile.name;
+    }
+
+    const text = textarea.value.trim();
+    const postData = { author_id: State.user.id, content: text || '' };
+    if (imageUrl)  postData.image_url  = imageUrl;
+    if (fileUrl)   postData.file_url   = fileUrl;
+    if (fileName)  postData.file_name  = fileName;
     if (hasCode && codeBlock.textContent.trim() !== '// Your code here') {
       postData.code_block = codeBlock.textContent.trim();
-      postData.code_lang = codeLang;
+      postData.code_lang  = codeLang;
     }
 
     const { error } = await sb.from('posts').insert(postData);
     if (error) {
       toast('Failed to post: ' + error.message, 'circle-exclamation');
     } else {
-      // Refresh feed
       const feed = $('#feed');
       if (feed) loadPosts(feed);
       textarea.value = '';
       charCount.textContent = '280';
-      submitBtn.textContent = 'Post';
       codeBlock.textContent = '';
       codeBlock.classList.remove('visible');
       hasCode = false;
       addCodeBtn.style.color = '';
       selectedImageFile = null;
+      selectedAttachFile = null;
       imgInput.value = '';
-      imgPreview.style.display = 'none';
-      imgPreview.innerHTML = '';
+      fileInput.value = '';
+      preview.style.display = 'none';
+      preview.innerHTML = '';
       toast('Posted!', 'paper-plane');
     }
     submitBtn.disabled = false;
@@ -1611,6 +1697,18 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
   let contentHtml = `<div class="post-content">${escapeHtml(post.content).replace(/#(\w+)/g, '<span class="hashtag">#$1</span>').replace(/@(\w+)/g, '<span class="mention">@$1</span>')}</div>`;
   if (post.image_url) {
     contentHtml += `<div class="post-image-wrap"><img src="${escapeHtml(post.image_url)}" class="post-image" alt="Post image" loading="lazy" style="max-width:100%;border-radius:12px;margin-top:8px;border:1px solid var(--border);display:block"></div>`;
+  }
+  if (post.file_url && post.file_name) {
+    const icon = fileIcon(post.file_name);
+    contentHtml += `
+      <a href="${escapeHtml(post.file_url)}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;display:inline-flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;margin-top:8px;max-width:100%;min-width:0;transition:border-color 0.15s" onmouseover="this.style.borderColor='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)'">
+        <i class="fa-solid ${icon}" style="font-size:20px;color:var(--cyan);flex-shrink:0"></i>
+        <div style="min-width:0;flex:1">
+          <div style="font-size:13px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(post.file_name)}</div>
+          <div style="font-size:11px;color:var(--text-muted)">Click to download</div>
+        </div>
+        <i class="fa-solid fa-download" style="font-size:13px;color:var(--text-muted);flex-shrink:0"></i>
+      </a>`;
   }
   if (post.code_block) {
     contentHtml += `<pre class="post-code"><span class="post-code-lang">${post.code_lang || ''}</span>${escapeHtml(post.code_block)}</pre>`;
@@ -2730,7 +2828,7 @@ async function loadProfilePosts(container, userId) {
   container.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted)">Loading…</div>`;
   const { data: posts } = await sb
     .from('posts')
-    .select('id, content, code_block, code_lang, image_url, likes_count, comments_count, reposts_count, created_at, profiles!posts_author_id_fkey(id, username, display_name, avatar_url)')
+    .select('id, content, code_block, code_lang, image_url, file_url, file_name, likes_count, comments_count, reposts_count, created_at, profiles!posts_author_id_fkey(id, username, display_name, avatar_url)')
     .eq('author_id', userId)
     .order('created_at', { ascending: false });
 
@@ -2824,7 +2922,7 @@ async function renderBookmarks(main) {
 
   const { data: bookmarks } = await sb
     .from('bookmarks')
-    .select('post_id, posts(id, content, code_block, code_lang, image_url, likes_count, comments_count, created_at, profiles!posts_author_id_fkey(id, username, display_name, avatar_url))')
+    .select('post_id, posts(id, content, code_block, code_lang, image_url, file_url, file_name, likes_count, comments_count, created_at, profiles!posts_author_id_fkey(id, username, display_name, avatar_url))')
     .eq('user_id', State.user.id)
     .order('created_at', { ascending: false });
 
