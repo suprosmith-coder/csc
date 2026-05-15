@@ -355,6 +355,70 @@ create table if not exists channel_messages (
 alter table channel_messages enable row level security;
 create policy "Public channel messages" on channel_messages for select using (true);
 create policy "Auth channel message" on channel_messages for insert with check (auth.uid() = author_id);
+
+-- Snippets (short video posts)
+create table if not exists snippets (
+  id uuid primary key default gen_random_uuid(),
+  author_id uuid references profiles(id) on delete cascade not null,
+  video_url text not null,
+  caption text default '',
+  hearts_count int default 0,
+  duration int default 0,
+  created_at timestamptz default now()
+);
+alter table snippets enable row level security;
+create policy "Public snippets" on snippets for select using (true);
+create policy "Auth insert snippet" on snippets for insert with check (auth.uid() = author_id);
+create policy "Own snippet delete" on snippets for delete using (auth.uid() = author_id);
+
+-- Snippet hearts
+create table if not exists snippet_hearts (
+  id uuid primary key default gen_random_uuid(),
+  snippet_id uuid references snippets(id) on delete cascade not null,
+  user_id uuid references profiles(id) on delete cascade not null,
+  created_at timestamptz default now(),
+  unique(snippet_id, user_id)
+);
+alter table snippet_hearts enable row level security;
+create policy "Public snippet hearts" on snippet_hearts for select using (true);
+create policy "Auth heart" on snippet_hearts for insert with check (auth.uid() = user_id);
+create policy "Own unheart" on snippet_hearts for delete using (auth.uid() = user_id);
+
+-- Snippet bookmarks
+create table if not exists snippet_bookmarks (
+  id uuid primary key default gen_random_uuid(),
+  snippet_id uuid references snippets(id) on delete cascade not null,
+  user_id uuid references profiles(id) on delete cascade not null,
+  created_at timestamptz default now(),
+  unique(snippet_id, user_id)
+);
+alter table snippet_bookmarks enable row level security;
+create policy "Own snippet bookmarks" on snippet_bookmarks for select using (auth.uid() = user_id);
+create policy "Auth snippet bookmark" on snippet_bookmarks for insert with check (auth.uid() = user_id);
+create policy "Own snippet unbookmark" on snippet_bookmarks for delete using (auth.uid() = user_id);
+
+-- Links (close connections)
+create table if not exists links (
+  id uuid primary key default gen_random_uuid(),
+  requester_id uuid references profiles(id) on delete cascade not null,
+  target_id uuid references profiles(id) on delete cascade not null,
+  status text default 'pending', -- pending | accepted
+  created_at timestamptz default now(),
+  unique(requester_id, target_id)
+);
+alter table links enable row level security;
+create policy "Own links" on links for select using (auth.uid() = requester_id or auth.uid() = target_id);
+create policy "Auth link request" on links for insert with check (auth.uid() = requester_id);
+create policy "Auth link update" on links for update using (auth.uid() = target_id);
+create policy "Auth link delete" on links for delete using (auth.uid() = requester_id or auth.uid() = target_id);
+
+-- Add banner_color and banner_url columns to profiles (if not exists)
+alter table profiles add column if not exists banner_color text default '#0d1b2e';
+alter table profiles add column if not exists banner_url text;
+
+-- Enable realtime for snippets and links
+alter publication supabase_realtime add table snippets;
+alter publication supabase_realtime add table links;
 `);
 }
 
@@ -1140,6 +1204,8 @@ function buildSidebar() {
   const links = [
     { id: 'feed',          icon: '<i class="fa-solid fa-house"></i>', label: 'Home' },
     { id: 'explore',       icon: '<i class="fa-solid fa-compass"></i>', label: 'Explore' },
+    { id: 'snippets',      icon: '<i class="fa-solid fa-film"></i>', label: 'Snippets' },
+    { id: 'links',         icon: '<i class="fa-solid fa-link"></i>', label: 'Links', badge: 0 },
     { id: 'notifications', icon: '<i class="fa-solid fa-bell"></i>', label: 'Notifications', badge: State.unreadNotifs },
     { id: 'messages',      icon: '<i class="fa-solid fa-message"></i>', label: 'Messages', badge: State.unreadMessages },
     { id: 'profile',       icon: '<i class="fa-solid fa-user"></i>', label: 'Profile' },
@@ -1339,6 +1405,8 @@ function navigateTo(view) {
   const renderers = {
     feed:          renderFeed,
     explore:       renderExplore,
+    snippets:      renderSnippets,
+    links:         renderLinks,
     notifications: renderNotifications,
     messages:      renderMessages,
     profile:       renderProfile,
@@ -1716,10 +1784,10 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
 
   card.innerHTML = `
     <div class="post-header">
-      <div class="post-avatar" style="background:${color}">${avatarInitials(profile?.display_name || profile?.username || '?')}</div>
+      <div class="post-avatar pfp-clickable" data-uid="${profile?.id || ''}" style="background:${color};cursor:pointer" title="View profile">${profile?.avatar_url ? `<img src="${escapeHtml(profile.avatar_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : avatarInitials(profile?.display_name || profile?.username || '?')}</div>
       <div class="post-meta">
         <div class="post-author">
-          ${profile?.display_name || profile?.username || 'Unknown'}
+          <span class="pfp-clickable" data-uid="${profile?.id || ''}" style="cursor:pointer">${profile?.display_name || profile?.username || 'Unknown'}</span>
           <span class="post-author-handle">@${profile?.username || '?'}</span>
         </div>
         <div class="post-time">${timeAgo(post.created_at)}</div>
@@ -1794,6 +1862,15 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
   $('.share-btn', card).addEventListener('click', e => {
     e.stopPropagation();
     navigator.clipboard?.writeText(window.location.origin + '/post/' + post.id).then(() => toast('Link copied!', 'link'));
+  });
+
+  // PFP / author click → quick profile view
+  card.querySelectorAll('.pfp-clickable[data-uid]').forEach(el => {
+    el.addEventListener('click', e => {
+      e.stopPropagation();
+      const uid = el.dataset.uid;
+      if (uid) openProfileQuickView(uid);
+    });
   });
 
   // Delete (own posts)
@@ -2702,8 +2779,8 @@ async function renderProfile(main, userId = null) {
   const safeWebsite  = escapeHtml(profile.website || '');
 
   main.innerHTML = `
-    <div class="profile-cover">
-      <div class="profile-cover-art" style="background:linear-gradient(135deg,${color}22,var(--bg-void))"></div>
+    <div class="profile-cover" style="${profile.banner_url ? `background-image:url('${escapeHtml(profile.banner_url)}');background-size:cover;background-position:center` : ''}">
+      <div class="profile-cover-art" style="background:${profile.banner_url ? 'rgba(0,0,0,0.3)' : `linear-gradient(135deg,${color}22,var(--bg-void))`};${profile.banner_color && !profile.banner_url ? `background:${profile.banner_color}` : ''}"></div>
     </div>
     <div class="profile-info-section">
       <div style="display:flex;justify-content:space-between;align-items:flex-end">
@@ -2842,77 +2919,6 @@ async function loadProfilePosts(container, userId) {
   posts.forEach(p => container.appendChild(buildPostCard(p, p.profiles, likedIds.has(p.id), false)));
 }
 
-function openProfileEditModal(profile) {
-  const modal = $('#modal-overlay');
-  const body  = $('#modal-body');
-  $('#modal-title-text').textContent = 'Edit Profile';
-  modal.classList.add('open');
-
-  body.innerHTML = `
-    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
-      <div class="auth-input-group">
-        <label>Display Name</label>
-        <input type="text" id="edit-display-name" class="auth-input" value="${profile.display_name || ''}" placeholder="Your name" maxlength="50" autocomplete="name">
-      </div>
-      <div class="auth-input-group">
-        <label>Username</label>
-        <input type="text" id="edit-username" class="auth-input" value="${profile.username || ''}" placeholder="username" maxlength="30" autocomplete="username">
-      </div>
-      <div class="auth-input-group">
-        <label>Bio</label>
-        <textarea id="edit-bio" class="auth-input" placeholder="Tell the world about yourself" rows="3" style="resize:vertical" autocomplete="off">${profile.bio || ''}</textarea>
-      </div>
-      <div class="auth-input-group">
-        <label>Location</label>
-        <input type="text" id="edit-location" class="auth-input" value="${profile.location || ''}" placeholder="City, Country" autocomplete="address-level2">
-      </div>
-      <div class="auth-input-group">
-        <label>Website</label>
-        <input type="url" id="edit-website" class="auth-input" value="${profile.website || ''}" placeholder="https://yoursite.dev" autocomplete="url">
-      </div>
-      <div class="auth-input-group">
-        <label>Tech Stack (comma-separated)</label>
-        <input type="text" id="edit-tech" class="auth-input" value="${(profile.tech_stack || []).join(', ')}" placeholder="React, TypeScript, Node.js" autocomplete="off">
-      </div>
-      <div id="edit-status" style="font-size:12px;color:var(--text-muted);display:none"></div>
-      <button class="auth-btn-primary" id="save-profile-btn">Save Changes</button>
-    </div>
-  `;
-
-  $('#save-profile-btn').addEventListener('click', async () => {
-    const btn = $('#save-profile-btn');
-    btn.disabled = true;
-    btn.textContent = 'Saving…';
-    const statusEl = $('#edit-status');
-    statusEl.style.display = 'block';
-    statusEl.textContent = 'Saving…';
-
-    const tech_stack = $('#edit-tech').value.split(',').map(t => t.trim()).filter(Boolean);
-    const { error } = await sb.from('profiles').update({
-      display_name: $('#edit-display-name').value.trim(),
-      username: $('#edit-username').value.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-      bio: $('#edit-bio').value.trim(),
-      location: $('#edit-location').value.trim(),
-      website: $('#edit-website').value.trim(),
-      tech_stack,
-    }).eq('id', State.user.id);
-
-    if (error) {
-      statusEl.style.color = 'var(--rose)';
-      statusEl.textContent = 'Failed: ' + error.message;
-      btn.disabled = false;
-      btn.textContent = 'Save Changes';
-    } else {
-      // Refresh profile
-      const { data: updated } = await sb.from('profiles').select('*').eq('id', State.user.id).single();
-      State.profile = updated;
-      modal.classList.remove('open');
-      toast('Profile updated!', 'pen');
-      navigateTo('profile');
-    }
-  });
-}
-
 /* ── Bookmarks ──────────────────────────────────────────────── */
 async function renderBookmarks(main) {
   main.innerHTML = `
@@ -2996,6 +3002,632 @@ function renderSettings(main) {
     const { error } = await sb.auth.resetPasswordForEmail(State.user.email, { redirectTo: 'https://suprosmith-coder.github.io/csc/' });
     if (!error) toast('Password reset email sent!', 'envelope');
     else toast('Error: ' + error.message, 'circle-exclamation');
+  });
+}
+
+/* ── Profile Quick View (tap PFP) ───────────────────────────── */
+function openProfileQuickView(userId) {
+  const overlay = document.getElementById('profile-quick-overlay');
+  const card    = document.getElementById('profile-quick-card');
+  if (!overlay || !card) return;
+
+  overlay.style.display = 'flex';
+  card.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted)">Loading…</div>`;
+
+  // Close on overlay click
+  overlay.onclick = e => { if (e.target === overlay) { overlay.style.display = 'none'; } };
+
+  sb.from('profiles').select('*').eq('id', userId).single().then(async ({ data: p }) => {
+    if (!p) { card.innerHTML = `<div style="padding:24px;text-align:center;color:var(--rose)">Profile not found</div>`; return; }
+
+    const isOwn = userId === State.user.id;
+    const color = avatarColor(p.display_name || p.username || '?');
+    const { data: followRow } = !isOwn ? await sb.from('follows').select('id').eq('follower_id', State.user.id).eq('following_id', userId).single() : { data: null };
+    const isFollowing = !!followRow;
+
+    // Check if linked
+    const { data: linkRow } = !isOwn ? await sb.from('links').select('id').eq('requester_id', State.user.id).eq('target_id', userId).eq('status', 'accepted').single() : { data: null };
+    const isLinked = !!linkRow;
+
+    card.innerHTML = `
+      <div style="height:80px;background:linear-gradient(135deg,${color}33,var(--bg-void));position:relative;">
+        <button id="pqv-close" style="position:absolute;top:10px;right:12px;color:var(--text-muted);font-size:20px;background:none;border:none;cursor:pointer;line-height:1"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div style="padding:0 20px 20px;margin-top:-36px">
+        <div style="width:72px;height:72px;border-radius:50%;background:${color};border:4px solid var(--bg-surface);display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff;overflow:hidden;margin-bottom:10px">
+          ${p.avatar_url ? `<img src="${escapeHtml(p.avatar_url)}" style="width:100%;height:100%;object-fit:cover">` : avatarInitials(p.display_name || p.username || 'U')}
+        </div>
+        <div style="font-family:var(--font-display);font-size:18px;font-weight:800">${escapeHtml(p.display_name || p.username || 'Unknown')}</div>
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:6px">@${escapeHtml(p.username || '')}</div>
+        ${p.bio ? `<div style="font-size:13px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5">${escapeHtml(p.bio)}</div>` : ''}
+        <div style="display:flex;gap:16px;margin-bottom:14px">
+          <div style="font-size:13px"><strong>${fmtNum(p.followers_count||0)}</strong> <span style="color:var(--text-muted)">Followers</span></div>
+          <div style="font-size:13px"><strong>${fmtNum(p.following_count||0)}</strong> <span style="color:var(--text-muted)">Following</span></div>
+        </div>
+        ${!isOwn ? `<div style="display:flex;gap:8px">
+          <button class="profile-action-btn ${isFollowing?'secondary':'primary'}" id="pqv-follow" style="flex:1">${isFollowing ? 'Unfollow' : 'Follow'}</button>
+          <button class="profile-action-btn secondary" id="pqv-dm" style="flex:1"><i class="fa-solid fa-message"></i> DM</button>
+          <button class="profile-action-btn secondary" id="pqv-link" title="${isLinked?'Linked':'Link'}">${isLinked ? '<i class="fa-solid fa-link" style="color:var(--cyan)"></i>' : '<i class="fa-solid fa-user-plus"></i>'}</button>
+        </div>` : `<button class="profile-action-btn secondary" id="pqv-view-full" style="width:100%">View Full Profile</button>`}
+        <button class="profile-action-btn secondary" id="pqv-view-profile" style="width:100%;margin-top:8px">View Full Profile</button>
+      </div>
+    `;
+
+    document.getElementById('pqv-close').onclick = () => overlay.style.display = 'none';
+    document.getElementById('pqv-view-profile').onclick = () => { overlay.style.display = 'none'; renderProfile($('#main'), userId); };
+
+    const followBtn = document.getElementById('pqv-follow');
+    if (followBtn) {
+      let fState = isFollowing;
+      followBtn.onclick = async () => {
+        followBtn.disabled = true;
+        if (fState) {
+          await sb.from('follows').delete().eq('follower_id', State.user.id).eq('following_id', userId);
+          await sb.rpc('decrement_followers', { target_user_id: userId });
+          await sb.rpc('decrement_following', { target_user_id: State.user.id });
+          fState = false; followBtn.textContent = 'Follow'; followBtn.className = 'profile-action-btn primary';
+          toast('Unfollowed', 'user-minus');
+        } else {
+          await sb.from('follows').insert({ follower_id: State.user.id, following_id: userId });
+          await sb.rpc('increment_followers', { target_user_id: userId });
+          await sb.rpc('increment_following', { target_user_id: State.user.id });
+          await sb.from('notifications').insert({ user_id: userId, actor_id: State.user.id, type: 'follow' });
+          fState = true; followBtn.textContent = 'Unfollow'; followBtn.className = 'profile-action-btn secondary';
+          toast('Followed!', 'user-check');
+        }
+        followBtn.disabled = false;
+      };
+    }
+
+    const dmBtn = document.getElementById('pqv-dm');
+    if (dmBtn) {
+      dmBtn.onclick = async () => {
+        overlay.style.display = 'none';
+        const a = State.user.id < userId ? State.user.id : userId;
+        const b = State.user.id < userId ? userId : State.user.id;
+        let { data: convo } = await sb.from('conversations').select('id').eq('participant_a', a).eq('participant_b', b).single();
+        if (!convo) { const { data: nc } = await sb.from('conversations').insert({ participant_a: a, participant_b: b }).select().single(); convo = nc; }
+        navigateTo('messages');
+        setTimeout(() => openDM(convo.id, userId, $('#dm-view')), 300);
+      };
+    }
+
+    const linkBtn = document.getElementById('pqv-link');
+    if (linkBtn) {
+      linkBtn.onclick = async () => {
+        if (isLinked) { toast('Already linked!', 'link'); return; }
+        const { error } = await sb.from('links').insert({ requester_id: State.user.id, target_id: userId, status: 'pending' });
+        if (!error) {
+          await sb.from('notifications').insert({ user_id: userId, actor_id: State.user.id, type: 'link_request' });
+          toast('Link request sent!', 'link');
+          linkBtn.innerHTML = '<i class="fa-solid fa-clock"></i>';
+        }
+      };
+    }
+  });
+}
+
+/* ── Snippets (short video feed) ────────────────────────────── */
+function renderSnippets(main) {
+  main.innerHTML = `
+    <div class="view-tabs">
+      <div class="view-tab active">Snippets</div>
+      <div class="view-tab" id="snippets-upload-tab" style="margin-left:auto;cursor:pointer;color:var(--cyan)"><i class="fa-solid fa-plus"></i> Post Snippet</div>
+    </div>
+    <div id="snippets-feed" class="snippets-feed">
+      <div style="padding:32px;text-align:center;color:var(--text-muted)">Loading Snippets…</div>
+    </div>
+  `;
+
+  document.getElementById('snippets-upload-tab').addEventListener('click', openSnippetUploadModal);
+  loadSnippets($('#snippets-feed'));
+}
+
+async function loadSnippets(container) {
+  // Algorithm: recent + popular (weighted by hearts + follows)
+  const { data: snippets } = await sb
+    .from('snippets')
+    .select('*, profiles!snippets_author_id_fkey(id, username, display_name, avatar_url)')
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (!snippets?.length) {
+    container.innerHTML = `
+      <div style="padding:60px 20px;text-align:center">
+        <div style="font-size:48px;margin-bottom:16px">🎬</div>
+        <div style="font-family:var(--font-display);font-size:20px;font-weight:800;margin-bottom:8px">No Snippets Yet</div>
+        <div style="color:var(--text-muted);font-size:14px">Be the first to post a 30-second Snippet!</div>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = '';
+  snippets.forEach(s => container.appendChild(buildSnippetCard(s)));
+}
+
+function buildSnippetCard(snippet) {
+  const card = el('div', 'snippet-card');
+  const color = avatarColor(snippet.profiles?.display_name || snippet.profiles?.username || '?');
+  card.innerHTML = `
+    <div class="snippet-video-wrap">
+      <video class="snippet-video" src="${escapeHtml(snippet.video_url || '')}" loop playsinline muted preload="metadata"></video>
+      <div class="snippet-overlay">
+        <div class="snippet-actions-side">
+          <button class="snippet-action-btn snippet-heart-btn" data-sid="${snippet.id}">
+            <i class="fa-solid fa-heart"></i>
+            <span class="snippet-heart-count">${fmtNum(snippet.hearts_count || 0)}</span>
+          </button>
+          <button class="snippet-action-btn snippet-bookmark-btn" data-sid="${snippet.id}">
+            <i class="fa-solid fa-bookmark"></i>
+          </button>
+          <button class="snippet-action-btn snippet-share-btn" data-sid="${snippet.id}">
+            <i class="fa-solid fa-share-nodes"></i>
+          </button>
+        </div>
+        <div class="snippet-info">
+          <div class="snippet-author" data-uid="${snippet.profiles?.id || ''}">
+            <div style="width:36px;height:36px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff;overflow:hidden;border:2px solid rgba(255,255,255,0.3);flex-shrink:0">
+              ${snippet.profiles?.avatar_url ? `<img src="${escapeHtml(snippet.profiles.avatar_url)}" style="width:100%;height:100%;object-fit:cover">` : avatarInitials(snippet.profiles?.display_name || snippet.profiles?.username || 'U')}
+            </div>
+            <div>
+              <div style="font-weight:700;font-size:13px;color:#fff">@${escapeHtml(snippet.profiles?.username || '?')}</div>
+            </div>
+          </div>
+          ${snippet.caption ? `<div class="snippet-caption">${escapeHtml(snippet.caption)}</div>` : ''}
+        </div>
+      </div>
+      <div class="snippet-play-icon"><i class="fa-solid fa-play"></i></div>
+    </div>
+  `;
+
+  const video = card.querySelector('.snippet-video');
+  const playIcon = card.querySelector('.snippet-play-icon');
+
+  // Play/pause on click
+  card.querySelector('.snippet-video-wrap').addEventListener('click', e => {
+    if (e.target.closest('.snippet-actions-side') || e.target.closest('.snippet-author')) return;
+    if (video.paused) { video.play(); playIcon.style.opacity = '0'; }
+    else { video.pause(); playIcon.style.opacity = '1'; }
+  });
+
+  // Intersection observer for autoplay
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) { video.play(); playIcon.style.opacity = '0'; }
+      else { video.pause(); }
+    });
+  }, { threshold: 0.6 });
+  obs.observe(card);
+
+  // PFP click
+  card.querySelector('.snippet-author').addEventListener('click', e => {
+    e.stopPropagation();
+    const uid = card.querySelector('.snippet-author').dataset.uid;
+    if (uid) openProfileQuickView(uid);
+  });
+
+  // Heart
+  card.querySelector('.snippet-heart-btn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    const countEl = btn.querySelector('.snippet-heart-count');
+    const { data: existing } = await sb.from('snippet_hearts').select('id').eq('snippet_id', snippet.id).eq('user_id', State.user.id).single();
+    if (existing) {
+      await sb.from('snippet_hearts').delete().eq('id', existing.id);
+      btn.querySelector('i').style.color = '';
+      countEl.textContent = fmtNum(Math.max(0, (parseInt(countEl.textContent) || 1) - 1));
+    } else {
+      await sb.from('snippet_hearts').insert({ snippet_id: snippet.id, user_id: State.user.id });
+      btn.querySelector('i').style.color = 'var(--rose)';
+      countEl.textContent = fmtNum((parseInt(countEl.textContent) || 0) + 1);
+      btn.style.transform = 'scale(1.4)'; setTimeout(() => btn.style.transform = '', 250);
+    }
+  });
+
+  // Bookmark
+  card.querySelector('.snippet-bookmark-btn').addEventListener('click', async e => {
+    e.stopPropagation();
+    const { data: existing } = await sb.from('snippet_bookmarks').select('id').eq('snippet_id', snippet.id).eq('user_id', State.user.id).single();
+    if (existing) { await sb.from('snippet_bookmarks').delete().eq('id', existing.id); toast('Removed from bookmarks', 'bookmark'); }
+    else { await sb.from('snippet_bookmarks').insert({ snippet_id: snippet.id, user_id: State.user.id }); toast('Snippet bookmarked!', 'bookmark'); }
+  });
+
+  return card;
+}
+
+function openSnippetUploadModal() {
+  const modal = $('#modal-overlay');
+  const body  = $('#modal-body');
+  $('#modal-title-text').textContent = '📸 Post a Snippet';
+  modal.classList.add('open');
+
+  body.innerHTML = `
+    <div style="padding:20px;display:flex;flex-direction:column;gap:14px">
+      <div class="drop-zone" id="snippet-drop-zone" style="border:2px dashed var(--border);border-radius:16px;padding:32px;text-align:center;cursor:pointer;transition:0.2s">
+        <div style="font-size:40px;margin-bottom:10px">🎬</div>
+        <div style="font-size:14px;font-weight:600;color:var(--text-secondary)">Drop your video here</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Max 30 seconds · Will be compressed to ~599 KB</div>
+        <input type="file" id="snippet-file-input" accept="video/*" style="display:none">
+      </div>
+      <div id="snippet-preview-area" style="display:none">
+        <video id="snippet-preview-video" style="width:100%;border-radius:12px;max-height:300px;background:#000" controls></video>
+        <div id="snippet-duration-warn" style="display:none;color:var(--rose);font-size:12px;margin-top:6px"><i class="fa-solid fa-triangle-exclamation"></i> Video exceeds 30 seconds — please trim it</div>
+      </div>
+      <div class="auth-input-group">
+        <label>Caption (optional)</label>
+        <textarea id="snippet-caption" class="auth-input" placeholder="What's this about? #hashtags @mentions" rows="2" style="resize:none"></textarea>
+      </div>
+      <div id="snippet-compress-status" style="display:none;font-size:12px;color:var(--cyan)"><i class="fa-solid fa-spinner fa-spin"></i> Compressing video…</div>
+      <button class="auth-btn-primary" id="snippet-post-btn" disabled><i class="fa-solid fa-film"></i> Post Snippet</button>
+    </div>
+  `;
+
+  const dropZone   = document.getElementById('snippet-drop-zone');
+  const fileInput  = document.getElementById('snippet-file-input');
+  const previewArea= document.getElementById('snippet-preview-area');
+  const previewVid = document.getElementById('snippet-preview-video');
+  const durationWarn = document.getElementById('snippet-duration-warn');
+  const postBtn    = document.getElementById('snippet-post-btn');
+  let selectedFile = null;
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--cyan)'; });
+  dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = 'var(--border)'; });
+  dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.style.borderColor = 'var(--border)'; const f = e.dataTransfer.files[0]; if (f && f.type.startsWith('video/')) handleSnippetFile(f); });
+
+  fileInput.addEventListener('change', () => { const f = fileInput.files[0]; if (f) handleSnippetFile(f); });
+
+  function handleSnippetFile(file) {
+    selectedFile = file;
+    const url = URL.createObjectURL(file);
+    previewVid.src = url;
+    previewArea.style.display = 'block';
+    previewVid.onloadedmetadata = () => {
+      if (previewVid.duration > 31) {
+        durationWarn.style.display = 'block';
+        postBtn.disabled = true;
+      } else {
+        durationWarn.style.display = 'none';
+        postBtn.disabled = false;
+      }
+    };
+  }
+
+  postBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    postBtn.disabled = true;
+    postBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Uploading…';
+    const status = document.getElementById('snippet-compress-status');
+    status.style.display = 'block';
+
+    // Simulate compression (actual FFmpeg compression would require a server/edge function)
+    // Here we upload directly — in production, route through a Supabase Edge Function
+    const caption = document.getElementById('snippet-caption').value.trim();
+    const ext = selectedFile.name.split('.').pop() || 'mp4';
+    const path = `snippets/${State.user.id}/${Date.now()}.${ext}`;
+
+    const { error: uploadErr } = await sb.storage.from('snippets').upload(path, selectedFile, { contentType: selectedFile.type });
+    status.style.display = 'none';
+
+    if (uploadErr) {
+      toast('Upload failed: ' + uploadErr.message, 'circle-exclamation');
+      postBtn.disabled = false;
+      postBtn.innerHTML = '<i class="fa-solid fa-film"></i> Post Snippet';
+      return;
+    }
+
+    const videoUrl = sb.storage.from('snippets').getPublicUrl(path).data.publicUrl;
+    const { error: insertErr } = await sb.from('snippets').insert({
+      author_id: State.user.id,
+      video_url: videoUrl,
+      caption,
+      hearts_count: 0,
+      duration: Math.round(previewVid.duration || 0),
+    });
+
+    if (insertErr) {
+      toast('Failed to post: ' + insertErr.message, 'circle-exclamation');
+    } else {
+      modal.classList.remove('open');
+      toast('Snippet posted!', 'film');
+      if (State.currentView === 'snippets') navigateTo('snippets');
+    }
+    postBtn.disabled = false;
+    postBtn.innerHTML = '<i class="fa-solid fa-film"></i> Post Snippet';
+  });
+}
+
+/* ── Links (like friends but with DM + Discord-style perks) ─── */
+function renderLinks(main) {
+  main.innerHTML = `
+    <div class="view-tabs">
+      <div class="view-tab active" data-ltab="my-links">My Links</div>
+      <div class="view-tab" data-ltab="requests">Requests</div>
+    </div>
+    <div id="links-content">
+      <div style="padding:32px;text-align:center;color:var(--text-muted)">Loading…</div>
+    </div>
+  `;
+
+  $$('.view-tab[data-ltab]', main).forEach(tab => {
+    tab.addEventListener('click', () => {
+      $$('.view-tab', main).forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      if (tab.dataset.ltab === 'my-links') loadMyLinks($('#links-content'));
+      else loadLinkRequests($('#links-content'));
+    });
+  });
+
+  loadMyLinks($('#links-content'));
+}
+
+async function loadMyLinks(container) {
+  const { data: linksA } = await sb.from('links').select('*, profiles!links_target_id_fkey(id, username, display_name, avatar_url)').eq('requester_id', State.user.id).eq('status', 'accepted');
+  const { data: linksB } = await sb.from('links').select('*, profiles!links_requester_id_fkey(id, username, display_name, avatar_url)').eq('target_id', State.user.id).eq('status', 'accepted');
+
+  const allLinks = [...(linksA || []).map(l => l.profiles), ...(linksB || []).map(l => l.profiles)].filter(Boolean);
+
+  if (!allLinks.length) {
+    container.innerHTML = `
+      <div style="padding:60px 20px;text-align:center">
+        <div style="font-size:48px;margin-bottom:12px">🔗</div>
+        <div style="font-family:var(--font-display);font-size:20px;font-weight:800;margin-bottom:8px">No Links Yet</div>
+        <div style="color:var(--text-muted);font-size:14px">Links are close connections you can DM anytime. Tap someone's profile picture to send a Link request!</div>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = `<div style="padding:12px"></div>`;
+  const list = container.querySelector('div');
+  allLinks.forEach(p => {
+    const color = avatarColor(p.display_name || p.username || '?');
+    const row = el('div', 'link-person-row');
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;margin-bottom:8px;transition:0.18s" onmouseover="this.style.borderColor='var(--cyan)'" onmouseout="this.style.borderColor='var(--border)'">
+        <div style="width:46px;height:46px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;color:#fff;overflow:hidden;cursor:pointer;flex-shrink:0" data-uid="${p.id}" class="pfp-clickable">
+          ${p.avatar_url ? `<img src="${escapeHtml(p.avatar_url)}" style="width:100%;height:100%;object-fit:cover">` : avatarInitials(p.display_name || p.username || 'U')}
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:14px">${escapeHtml(p.display_name || p.username || 'Unknown')}</div>
+          <div style="font-size:12px;color:var(--text-muted)">@${escapeHtml(p.username || '')} · <span style="color:var(--emerald)">● Linked</span></div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="link-dm-btn profile-action-btn secondary" data-uid="${p.id}" style="padding:6px 12px;font-size:12px"><i class="fa-solid fa-message"></i> DM</button>
+          <button class="link-profile-btn profile-action-btn secondary" data-uid="${p.id}" style="padding:6px 12px;font-size:12px"><i class="fa-solid fa-user"></i></button>
+        </div>
+      </div>`;
+    list.appendChild(row);
+  });
+
+  // Wire buttons
+  container.querySelectorAll('.pfp-clickable[data-uid]').forEach(el => {
+    el.addEventListener('click', () => openProfileQuickView(el.dataset.uid));
+  });
+  container.querySelectorAll('.link-dm-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const uid = btn.dataset.uid;
+      const a = State.user.id < uid ? State.user.id : uid;
+      const b = State.user.id < uid ? uid : State.user.id;
+      let { data: convo } = await sb.from('conversations').select('id').eq('participant_a', a).eq('participant_b', b).single();
+      if (!convo) { const { data: nc } = await sb.from('conversations').insert({ participant_a: a, participant_b: b }).select().single(); convo = nc; }
+      navigateTo('messages');
+      setTimeout(() => openDM(convo.id, uid, $('#dm-view')), 300);
+    });
+  });
+  container.querySelectorAll('.link-profile-btn').forEach(btn => {
+    btn.addEventListener('click', () => { renderProfile($('#main'), btn.dataset.uid); });
+  });
+}
+
+async function loadLinkRequests(container) {
+  const { data: incoming } = await sb.from('links').select('*, profiles!links_requester_id_fkey(id, username, display_name, avatar_url)').eq('target_id', State.user.id).eq('status', 'pending');
+
+  if (!incoming?.length) {
+    container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">No pending link requests</div>`;
+    return;
+  }
+
+  container.innerHTML = `<div style="padding:12px"></div>`;
+  const list = container.querySelector('div');
+  incoming.forEach(req => {
+    const p = req.profiles;
+    if (!p) return;
+    const color = avatarColor(p.display_name || p.username || '?');
+    const row = el('div', '');
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;margin-bottom:8px">
+        <div style="width:44px;height:44px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#fff;overflow:hidden;flex-shrink:0">
+          ${p.avatar_url ? `<img src="${escapeHtml(p.avatar_url)}" style="width:100%;height:100%;object-fit:cover">` : avatarInitials(p.display_name || p.username || 'U')}
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:700;font-size:14px">${escapeHtml(p.display_name || p.username || 'Unknown')}</div>
+          <div style="font-size:12px;color:var(--text-muted)">@${escapeHtml(p.username || '')} wants to link with you</div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="accept-link-btn profile-action-btn primary" data-lid="${req.id}" style="padding:6px 12px;font-size:12px">Accept</button>
+          <button class="decline-link-btn profile-action-btn secondary" data-lid="${req.id}" style="padding:6px 12px;font-size:12px">Decline</button>
+        </div>
+      </div>`;
+    list.appendChild(row);
+  });
+
+  container.querySelectorAll('.accept-link-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await sb.from('links').update({ status: 'accepted' }).eq('id', btn.dataset.lid);
+      toast('Link accepted!', 'link');
+      loadLinkRequests(container);
+    });
+  });
+  container.querySelectorAll('.decline-link-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await sb.from('links').delete().eq('id', btn.dataset.lid);
+      toast('Request declined', 'xmark');
+      loadLinkRequests(container);
+    });
+  });
+}
+
+/* ── Enhanced Profile Edit (with avatar + banner customization) */
+function openProfileEditModal(profile) {
+  const modal = $('#modal-overlay');
+  const body  = $('#modal-body');
+  $('#modal-title-text').textContent = 'Edit Profile';
+  modal.classList.add('open');
+
+  const BANNER_COLORS = ['#0d1b2e', '#1a0d2e', '#0d2e1a', '#2e1a0d', '#1a1a2e', '#2e0d1a', '#0d2e2e'];
+
+  body.innerHTML = `
+    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+
+      <!-- Banner customizer -->
+      <div>
+        <label style="font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;display:block">Profile Banner</label>
+        <div id="banner-preview" style="height:80px;border-radius:12px;background:${profile.banner_color || '#0d1b2e'};position:relative;overflow:hidden;margin-bottom:8px;border:1px solid var(--border)">
+          ${profile.banner_url ? `<img src="${escapeHtml(profile.banner_url)}" style="width:100%;height:100%;object-fit:cover;position:absolute;inset:0">` : ''}
+          <button id="banner-img-btn" style="position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,0.6);border:none;border-radius:8px;color:#fff;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer"><i class="fa-solid fa-image"></i> Change Image</button>
+          <input type="file" id="banner-img-input" accept="image/*" style="display:none">
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${BANNER_COLORS.map(c => `<button class="banner-color-btn" data-color="${c}" style="width:28px;height:28px;border-radius:8px;background:${c};border:2px solid ${(profile.banner_color||'#0d1b2e')===c?'var(--cyan)':'transparent'};cursor:pointer;transition:0.15s"></button>`).join('')}
+          <input type="color" id="banner-custom-color" value="${profile.banner_color || '#0d1b2e'}" style="width:28px;height:28px;border-radius:8px;border:2px solid var(--border);cursor:pointer;padding:0;background:none">
+        </div>
+      </div>
+
+      <!-- Avatar -->
+      <div class="edit-avatar-section">
+        <div id="edit-avatar-preview" class="edit-avatar-preview" style="background:linear-gradient(135deg,${profile.banner_color||'var(--cyan)'},var(--violet))">
+          ${profile.avatar_url ? `<img src="${escapeHtml(profile.avatar_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">` : avatarInitials(profile.display_name || profile.username || 'U')}
+        </div>
+        <div class="edit-avatar-actions">
+          <button class="edit-avatar-btn" id="change-avatar-btn"><i class="fa-solid fa-camera"></i> Change Photo</button>
+          <input type="file" id="avatar-img-input" accept="image/*" style="display:none">
+          <div style="font-size:11px;color:var(--text-muted)">Max 2MB · JPG, PNG, GIF</div>
+        </div>
+      </div>
+
+      <div class="auth-input-group">
+        <label>Display Name</label>
+        <input type="text" id="edit-display-name" class="auth-input" value="${profile.display_name || ''}" placeholder="Your name" maxlength="50" autocomplete="name">
+      </div>
+      <div class="auth-input-group">
+        <label>Username</label>
+        <input type="text" id="edit-username" class="auth-input" value="${profile.username || ''}" placeholder="username" maxlength="30" autocomplete="username">
+      </div>
+      <div class="auth-input-group">
+        <label>Bio</label>
+        <textarea id="edit-bio" class="auth-input" placeholder="Tell the world about yourself" rows="3" style="resize:vertical" autocomplete="off">${profile.bio || ''}</textarea>
+      </div>
+      <div class="auth-input-group">
+        <label>Location</label>
+        <input type="text" id="edit-location" class="auth-input" value="${profile.location || ''}" placeholder="City, Country" autocomplete="address-level2">
+      </div>
+      <div class="auth-input-group">
+        <label>Website</label>
+        <input type="url" id="edit-website" class="auth-input" value="${profile.website || ''}" placeholder="https://yoursite.dev" autocomplete="url">
+      </div>
+      <div class="auth-input-group">
+        <label>Tech Stack (comma-separated)</label>
+        <input type="text" id="edit-tech" class="auth-input" value="${(profile.tech_stack || []).join(', ')}" placeholder="React, TypeScript, Node.js" autocomplete="off">
+      </div>
+      <div id="edit-status" style="font-size:12px;color:var(--text-muted);display:none"></div>
+      <button class="auth-btn-primary" id="save-profile-btn">Save Changes</button>
+    </div>
+  `;
+
+  let newBannerColor = profile.banner_color || '#0d1b2e';
+  let newAvatarFile  = null;
+  let newBannerFile  = null;
+
+  // Banner color swatches
+  document.querySelectorAll('.banner-color-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      newBannerColor = btn.dataset.color;
+      document.querySelectorAll('.banner-color-btn').forEach(b => b.style.borderColor = 'transparent');
+      btn.style.borderColor = 'var(--cyan)';
+      const preview = document.getElementById('banner-preview');
+      if (!newBannerFile) preview.style.background = newBannerColor;
+      document.getElementById('banner-custom-color').value = newBannerColor;
+    });
+  });
+
+  document.getElementById('banner-custom-color').addEventListener('input', e => {
+    newBannerColor = e.target.value;
+    document.getElementById('banner-preview').style.background = newBannerColor;
+  });
+
+  // Banner image
+  document.getElementById('banner-img-btn').addEventListener('click', () => document.getElementById('banner-img-input').click());
+  document.getElementById('banner-img-input').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    newBannerFile = file;
+    const url = URL.createObjectURL(file);
+    const preview = document.getElementById('banner-preview');
+    let img = preview.querySelector('img');
+    if (!img) { img = document.createElement('img'); img.style.cssText = 'width:100%;height:100%;object-fit:cover;position:absolute;inset:0'; preview.insertBefore(img, preview.firstChild); }
+    img.src = url;
+  });
+
+  // Avatar
+  document.getElementById('change-avatar-btn').addEventListener('click', () => document.getElementById('avatar-img-input').click());
+  document.getElementById('avatar-img-input').addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { toast('Avatar must be under 2MB', 'circle-exclamation'); return; }
+    newAvatarFile = file;
+    const url = URL.createObjectURL(file);
+    const preview = document.getElementById('edit-avatar-preview');
+    preview.innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+  });
+
+  document.getElementById('save-profile-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('save-profile-btn');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    const statusEl = document.getElementById('edit-status');
+    statusEl.style.display = 'block'; statusEl.textContent = 'Saving…';
+
+    let avatarUrl = profile.avatar_url;
+    let bannerUrl = profile.banner_url;
+
+    // Upload new avatar
+    if (newAvatarFile) {
+      const ext = newAvatarFile.name.split('.').pop();
+      const path = `avatars/${State.user.id}/avatar_${Date.now()}.${ext}`;
+      const { error: avErr } = await sb.storage.from('avatars').upload(path, newAvatarFile, { contentType: newAvatarFile.type, upsert: true });
+      if (!avErr) avatarUrl = sb.storage.from('avatars').getPublicUrl(path).data.publicUrl;
+    }
+
+    // Upload new banner
+    if (newBannerFile) {
+      const ext = newBannerFile.name.split('.').pop();
+      const path = `banners/${State.user.id}/banner_${Date.now()}.${ext}`;
+      const { error: bnErr } = await sb.storage.from('banners').upload(path, newBannerFile, { contentType: newBannerFile.type, upsert: true });
+      if (!bnErr) bannerUrl = sb.storage.from('banners').getPublicUrl(path).data.publicUrl;
+    }
+
+    const tech_stack = document.getElementById('edit-tech').value.split(',').map(t => t.trim()).filter(Boolean);
+    const { error } = await sb.from('profiles').update({
+      display_name: document.getElementById('edit-display-name').value.trim(),
+      username: document.getElementById('edit-username').value.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+      bio: document.getElementById('edit-bio').value.trim(),
+      location: document.getElementById('edit-location').value.trim(),
+      website: document.getElementById('edit-website').value.trim(),
+      tech_stack,
+      avatar_url: avatarUrl,
+      banner_url: bannerUrl,
+      banner_color: newBannerColor,
+    }).eq('id', State.user.id);
+
+    if (error) {
+      statusEl.style.color = 'var(--rose)'; statusEl.textContent = 'Failed: ' + error.message;
+      btn.disabled = false; btn.textContent = 'Save Changes';
+    } else {
+      const { data: updated } = await sb.from('profiles').select('*').eq('id', State.user.id).single();
+      State.profile = updated;
+      modal.classList.remove('open');
+      toast('Profile updated!', 'pen');
+      navigateTo('profile');
+    }
   });
 }
 

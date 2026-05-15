@@ -183,23 +183,23 @@
         <span class="bnav-label">Home</span>
         <span class="bnav-badge" id="bnav-badge-feed"></span>
       </button>
-      <button class="bnav-btn" data-nav="explore" aria-label="Explore">
-        <i class="fa-solid fa-compass"></i>
-        <span class="bnav-label">Explore</span>
+      <button class="bnav-btn" data-nav="snippets" aria-label="Snippets">
+        <i class="fa-solid fa-film"></i>
+        <span class="bnav-label">Snippets</span>
+      </button>
+      <button class="bnav-btn" data-nav="links" aria-label="Links">
+        <i class="fa-solid fa-link"></i>
+        <span class="bnav-label">Links</span>
+        <span class="bnav-badge" id="bnav-badge-links"></span>
       </button>
       <button class="bnav-btn" data-nav="notifications" aria-label="Notifications">
         <i class="fa-solid fa-bell"></i>
         <span class="bnav-label">Alerts</span>
         <span class="bnav-badge" id="bnav-badge-notifs"></span>
       </button>
-      <button class="bnav-btn" data-nav="messages" aria-label="Messages">
-        <i class="fa-solid fa-message"></i>
-        <span class="bnav-label">Messages</span>
-        <span class="bnav-badge" id="bnav-badge-messages"></span>
-      </button>
       <button class="bnav-btn" data-nav="profile" aria-label="Profile">
         <i class="fa-solid fa-user"></i>
-        <span class="bnav-label">Profile</span>
+        <span class="bnav-label">Me</span>
       </button>
     </div>
   </nav>
@@ -221,6 +221,12 @@
   </div>
 
   <div id="toast-container"></div>
+
+  <!-- PROFILE QUICK VIEW OVERLAY -->
+  <div id="profile-quick-overlay" style="display:none;position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);align-items:center;justify-content:center;">
+    <div id="profile-quick-card" style="background:var(--bg-surface);border:1px solid var(--border);border-radius:24px;width:360px;max-width:95vw;overflow:hidden;box-shadow:0 32px 80px rgba(0,0,0,0.6);">
+    </div>
+  </div>
 
   <script>
     // Apply saved theme immediately (before render) to avoid flash

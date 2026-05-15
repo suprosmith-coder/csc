@@ -2111,3 +2111,122 @@ ul, ol { list-style: none; }
 /* ── Topbar theme toggle position ──────────────────────────── */
 .topbar-actions { display: flex; align-items: center; gap: 4px; }
 
+/* ── Snippets Feed ──────────────────────────────────────────── */
+.snippets-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+}
+
+.snippet-card {
+  position: relative;
+  width: 100%;
+  max-height: 70vh;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  background: #000;
+  cursor: pointer;
+}
+
+.snippet-video-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 9/16;
+  max-height: 65vh;
+  background: #000;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+
+.snippet-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.snippet-overlay {
+  position: absolute; inset: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 50%, transparent 80%, rgba(0,0,0,0.3) 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 16px;
+  pointer-events: none;
+}
+
+.snippet-actions-side {
+  position: absolute;
+  right: 12px;
+  bottom: 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  pointer-events: all;
+  align-items: center;
+}
+
+.snippet-action-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  color: #fff; font-size: 22px;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  transition: transform 0.2s var(--spring);
+  background: none; border: none; cursor: pointer;
+}
+.snippet-action-btn:hover { transform: scale(1.15); }
+.snippet-heart-count { font-size: 12px; font-weight: 700; color: #fff; }
+
+.snippet-info {
+  pointer-events: all;
+  padding-right: 60px;
+}
+
+.snippet-author {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 8px; cursor: pointer;
+}
+
+.snippet-caption {
+  font-size: 13px; color: #fff; line-height: 1.5;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+
+.snippet-play-icon {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 40px; color: rgba(255,255,255,0.8);
+  transition: opacity 0.3s;
+  pointer-events: none;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.5);
+}
+
+/* ── Links Page ─────────────────────────────────────────────── */
+.link-person-row { }
+
+/* ── Profile Quick View ─────────────────────────────────────── */
+#profile-quick-overlay {
+  animation: fadeIn 0.2s ease forwards;
+}
+#profile-quick-card {
+  animation: scaleIn 0.3s var(--spring) forwards;
+}
+@keyframes scaleIn {
+  from { transform: scale(0.92); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ── Snippets SQL note ──────────────────────────────────────── */
+/* Add these tables in Supabase:
+snippets(id, author_id, video_url, caption, hearts_count, duration, created_at)
+snippet_hearts(id, snippet_id, user_id, created_at)
+snippet_bookmarks(id, snippet_id, user_id, created_at)
+links(id, requester_id, target_id, status['pending'|'accepted'], created_at)
+profiles: add banner_color text, banner_url text
+*/
+
