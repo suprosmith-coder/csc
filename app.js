@@ -859,7 +859,21 @@ async function buildApp() {
   initBottomNav();
   navigateTo('feed');
   initPresenceRealtime();
+  initGlobalNotifSub();
   loadUnreadCounts();
+}
+
+function initGlobalNotifSub() {
+  const sub = sb
+    .channel(`global_notifs_${State.user.id}`)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${State.user.id}` }, payload => {
+      State.unreadNotifs++;
+      updateBadges();
+      // If the notifications view is currently open, refresh it
+      if (State.currentView === 'notifications') loadNotifications();
+    })
+    .subscribe();
+  GlobalSubs.push(sub);
 }
 
 function initBottomNav() {
@@ -966,7 +980,7 @@ function buildTopbar() {
   const tb = $('#topbar');
   tb.innerHTML = `
     <div class="topbar-logo">
-      <img src="logo.png" alt="Devit" style="width:30px;height:30px;border-radius:8px;object-fit:cover">
+      <img src="devit.png" alt="Devit" style="width:30px;height:30px;border-radius:8px;object-fit:cover">
       <span>Devit</span>
     </div>
     <div class="topbar-search">
@@ -1455,6 +1469,7 @@ function buildComposer(container) {
         <textarea class="composer-textarea" id="post-textarea" placeholder="What are you building today?" rows="2"></textarea>
       </div>
       <pre class="composer-code-block" id="composer-code" spellcheck="false" contenteditable="false"></pre>
+      <div id="composer-img-preview" style="display:none;padding:0 0 8px 0;position:relative"></div>
       <div class="composer-toolbar">
         <button class="composer-tool" id="add-code-btn" title="Add code block">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
@@ -1462,6 +1477,7 @@ function buildComposer(container) {
         <button class="composer-tool" title="Add image" id="composer-img-btn">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
         </button>
+        <input type="file" id="composer-img-input" accept="image/*" style="display:none">
         <div class="composer-actions">
           <span class="char-count" id="char-count">280</span>
           <button class="post-btn" id="post-submit-btn" disabled>Post</button>
@@ -1475,14 +1491,18 @@ function buildComposer(container) {
   const submitBtn  = $('#post-submit-btn');
   const codeBlock  = $('#composer-code');
   const addCodeBtn = $('#add-code-btn');
+  const imgBtn     = $('#composer-img-btn');
+  const imgInput   = $('#composer-img-input');
+  const imgPreview = $('#composer-img-preview');
   let hasCode = false;
   let codeLang = 'js';
+  let selectedImageFile = null;
 
   textarea.addEventListener('input', () => {
     const left = 280 - textarea.value.length;
     charCount.textContent = left;
     charCount.style.color = left < 20 ? 'var(--rose)' : left < 60 ? 'var(--amber)' : 'var(--text-muted)';
-    submitBtn.disabled = textarea.value.trim().length === 0;
+    submitBtn.disabled = textarea.value.trim().length === 0 && !selectedImageFile;
   });
 
   addCodeBtn.addEventListener('click', () => {
@@ -1499,16 +1519,60 @@ function buildComposer(container) {
     }
   });
 
+  imgBtn.addEventListener('click', () => imgInput.click());
+
+  imgInput.addEventListener('change', () => {
+    const file = imgInput.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { toast('Image must be under 5MB', 'circle-exclamation'); imgInput.value = ''; return; }
+    selectedImageFile = file;
+    const reader = new FileReader();
+    reader.onload = e => {
+      imgPreview.style.display = 'block';
+      imgPreview.innerHTML = `
+        <div style="position:relative;display:inline-block">
+          <img src="${e.target.result}" style="max-height:180px;max-width:100%;border-radius:10px;border:1px solid var(--border);object-fit:cover">
+          <button id="composer-img-remove" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.6);border:none;border-radius:50%;width:22px;height:22px;cursor:pointer;color:#fff;font-size:12px;display:flex;align-items:center;justify-content:center"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+      `;
+      $('#composer-img-remove').addEventListener('click', () => {
+        selectedImageFile = null;
+        imgInput.value = '';
+        imgPreview.style.display = 'none';
+        imgPreview.innerHTML = '';
+        submitBtn.disabled = textarea.value.trim().length === 0;
+      });
+      submitBtn.disabled = false;
+    };
+    reader.readAsDataURL(file);
+  });
+
   submitBtn.addEventListener('click', async () => {
     const text = textarea.value.trim();
-    if (!text) return;
+    if (!text && !selectedImageFile) return;
     submitBtn.disabled = true;
     submitBtn.textContent = 'Posting…';
 
+    let imageUrl = null;
+    if (selectedImageFile) {
+      const ext = selectedImageFile.name.split('.').pop();
+      const path = `posts/${State.user.id}/${Date.now()}.${ext}`;
+      const { error: uploadErr } = await sb.storage.from('post-images').upload(path, selectedImageFile, { contentType: selectedImageFile.type });
+      if (uploadErr) {
+        toast('Image upload failed: ' + uploadErr.message, 'circle-exclamation');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Post';
+        return;
+      }
+      const { data: urlData } = sb.storage.from('post-images').getPublicUrl(path);
+      imageUrl = urlData.publicUrl;
+    }
+
     const postData = {
       author_id: State.user.id,
-      content: text,
+      content: text || '',
     };
+    if (imageUrl) postData.image_url = imageUrl;
     if (hasCode && codeBlock.textContent.trim() !== '// Your code here') {
       postData.code_block = codeBlock.textContent.trim();
       postData.code_lang = codeLang;
@@ -1528,6 +1592,10 @@ function buildComposer(container) {
       codeBlock.classList.remove('visible');
       hasCode = false;
       addCodeBtn.style.color = '';
+      selectedImageFile = null;
+      imgInput.value = '';
+      imgPreview.style.display = 'none';
+      imgPreview.innerHTML = '';
       toast('Posted!', 'paper-plane');
     }
     submitBtn.disabled = false;
@@ -1541,6 +1609,9 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
   const color = avatarColor(profile?.display_name || profile?.username || '?');
 
   let contentHtml = `<div class="post-content">${escapeHtml(post.content).replace(/#(\w+)/g, '<span class="hashtag">#$1</span>').replace(/@(\w+)/g, '<span class="mention">@$1</span>')}</div>`;
+  if (post.image_url) {
+    contentHtml += `<div class="post-image-wrap"><img src="${escapeHtml(post.image_url)}" class="post-image" alt="Post image" loading="lazy" style="max-width:100%;border-radius:12px;margin-top:8px;border:1px solid var(--border);display:block"></div>`;
+  }
   if (post.code_block) {
     contentHtml += `<pre class="post-code"><span class="post-code-lang">${post.code_lang || ''}</span>${escapeHtml(post.code_block)}</pre>`;
   }
@@ -1555,7 +1626,7 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
         </div>
         <div class="post-time">${timeAgo(post.created_at)}</div>
       </div>
-      ${post.author_id === State.user.id ? `<button class="post-delete-btn" data-pid="${post.id}" title="Delete post" style="margin-left:auto;color:var(--text-muted);font-size:14px;padding:4px 8px;border-radius:6px;transition:color 0.15s">>✕</button>#x2715;</button>` : ''}
+      ${post.author_id === State.user.id ? `<button class="post-delete-btn" data-pid="${post.id}" title="Delete post" style="margin-left:auto;color:var(--text-muted);font-size:14px;padding:4px 8px;border-radius:6px;transition:color 0.15s"><i class="fa-solid fa-xmark"></i></button>` : ''}
     </div>
     ${contentHtml}
     <div class="post-actions">
@@ -1836,10 +1907,18 @@ async function renderExplore(main) {
       const uid = btn.dataset.uid;
       btn.disabled = true;
       btn.textContent = '…';
-      await sb.from('follows').insert({ follower_id: State.user.id, following_id: uid });
-      btn.innerHTML = '<i class="fa-solid fa-check"></i> Following';
-      btn.style.opacity = '0.6';
-      toast('Followed!', 'user-check');
+      const { error } = await sb.from('follows').insert({ follower_id: State.user.id, following_id: uid });
+      if (!error) {
+        await sb.rpc('increment_followers', { target_user_id: uid });
+        await sb.rpc('increment_following', { target_user_id: State.user.id });
+        await sb.from('notifications').insert({ user_id: uid, actor_id: State.user.id, type: 'follow' });
+        btn.innerHTML = '<i class="fa-solid fa-check"></i> Following';
+        btn.style.opacity = '0.6';
+        toast('Followed!', 'user-check');
+      } else {
+        btn.textContent = 'Follow';
+        btn.disabled = false;
+      }
     });
   });
 }
@@ -2209,17 +2288,6 @@ async function renderNotifications(main) {
   });
 
   loadNotifications();
-
-  // Subscribe to new notifications
-  const sub = sb
-    .channel(`notifs_${State.user.id}`)
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${State.user.id}` }, () => {
-      State.unreadNotifs++;
-      updateBadges();
-      loadNotifications();
-    })
-    .subscribe();
-  State.realtimeSubs.push(sub);
 }
 
 async function loadNotifications() {
@@ -2242,19 +2310,21 @@ async function loadNotifications() {
     like:    '<i class="fa-solid fa-heart"></i>',
     follow:  '<i class="fa-solid fa-user-plus"></i>',
     comment: '<i class="fa-solid fa-comment"></i>',
-    mention: '<i class="fa-solid fa-at"></i>'
+    mention: '<i class="fa-solid fa-at"></i>',
+    reply:   '<i class="fa-solid fa-reply"></i>'
   };
   const textMap = {
-    like: actor => `<strong>${actor}</strong> liked your post`,
-    follow: actor => `<strong>${actor}</strong> started following you`,
+    like:    actor => `<strong>${actor}</strong> liked your post`,
+    follow:  actor => `<strong>${actor}</strong> started following you`,
     comment: actor => `<strong>${actor}</strong> commented on your post`,
     mention: actor => `<strong>${actor}</strong> mentioned you`,
+    reply:   actor => `<strong>${actor}</strong> replied to your comment`,
   };
 
   container.innerHTML = notifs.map(n => {
     const actor = n.profiles?.display_name || n.profiles?.username || 'Someone';
     const color = avatarColor(actor);
-    return `<div class="notif-item ${n.read ? '' : 'unread'}" data-nid="${n.id}">
+    return `<div class="notif-item ${n.read ? '' : 'unread'}" data-nid="${n.id}" data-post-id="${n.post_id || ''}">
       <div style="position:relative;flex-shrink:0">
         <div class="notif-avatar" style="background:${color}">${avatarInitials(actor)}</div>
         <div class="notif-icon notif-${n.type}">${iconMap[n.type] || '<i class="fa-solid fa-bell"></i>'}</div>
@@ -2272,6 +2342,11 @@ async function loadNotifications() {
       await sb.from('notifications').update({ read: true }).eq('id', item.dataset.nid);
       State.unreadNotifs = Math.max(0, State.unreadNotifs - 1);
       updateBadges();
+      // Navigate to post if applicable
+      if (item.dataset.postId && item.dataset.postId !== 'null') {
+        const { data: post } = await sb.from('posts').select('*, profiles!posts_author_id_fkey(id,username,display_name,avatar_url)').eq('id', item.dataset.postId).single();
+        if (post) openPostThread(post, post.profiles);
+      }
     });
   });
 }
@@ -2586,6 +2661,9 @@ async function renderProfile(main, userId = null) {
         followBtn.textContent = 'Follow';
         followBtn.className = 'profile-action-btn primary';
         toast('Unfollowed', 'user-minus');
+        // Update stat display
+        const statEls = main.querySelectorAll('.profile-stat strong');
+        if (statEls[1]) statEls[1].textContent = fmtNum(Math.max(0, (parseInt(statEls[1].textContent) || 1) - 1));
       } else {
         await sb.from('follows').insert({ follower_id: State.user.id, following_id: targetId });
         await sb.rpc('increment_followers', { target_user_id: targetId });
@@ -2595,6 +2673,9 @@ async function renderProfile(main, userId = null) {
         followBtn.textContent = 'Unfollow';
         followBtn.className = 'profile-action-btn secondary';
         toast('Followed!', 'user-check');
+        // Update stat display
+        const statEls = main.querySelectorAll('.profile-stat strong');
+        if (statEls[1]) statEls[1].textContent = fmtNum((parseInt(statEls[1].textContent) || 0) + 1);
       }
       followBtn.disabled = false;
     });
