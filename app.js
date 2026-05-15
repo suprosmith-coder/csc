@@ -12,10 +12,10 @@ const sb = createClient(
   window.DEVIT_CONFIG.SUPABASE_ANON_KEY,
   {
     auth: {
-      detectSessionInUrl: true,   // Parses #access_token from URL hash on redirect
+      detectSessionInUrl: true,   // Parses ?code= (PKCE) or #access_token (implicit) from URL
       persistSession: true,
       autoRefreshToken: true,
-      flowType: 'implicit',      // Hash-based (#access_token=...) — works on all browsers
+      flowType: 'pkce',          // PKCE uses ?code= query param — survives mobile hash-stripping
     }
   }
 );
@@ -747,13 +747,14 @@ async function initAuth() {
     try {
     // Clean OAuth tokens from the URL bar so back-button and
     // copy-pasting the URL don't expose or re-trigger tokens.
-    // Implicit flow: tokens arrive in hash (#access_token=...) — strip it after Supabase parses it.
+    // PKCE flow: code arrives as ?code= query param — strip after Supabase exchanges it.
+    // Implicit flow fallback: tokens in hash (#access_token=...) — also strip.
     try {
-      // Implicit flow: tokens arrive in the hash (#access_token=...).
       const url = new URL(window.location.href);
+      const hasOAuthCode = url.searchParams.has('code') || url.searchParams.has('error');
       const hasOAuthHash = url.hash && (url.hash.includes('access_token') || url.hash.includes('refresh_token'));
-      if (hasOAuthHash) {
-        history.replaceState(null, '', url.pathname + (url.search && url.search !== '?' ? url.search : ''));
+      if (hasOAuthCode || hasOAuthHash) {
+        history.replaceState(null, '', url.pathname);
       }
     } catch (e) { /* non-critical */ }
 
@@ -788,31 +789,32 @@ async function initAuth() {
 
   }); // end onAuthStateChange
 
-  // ── getSession() on page load ─────────────────────────────────
-  // For returning users: resolves instantly from localStorage.
-  // For OAuth redirects: Supabase parses #access_token from the hash
-  // via detectSessionInUrl and fires onAuthStateChange(SIGNED_IN).
-  //
   // MOBILE FIX: On iOS Safari, the browser can reload the page after
-  // the OAuth redirect in a way that fires hashchange BEFORE DOMContentLoaded.
-  // We also listen for hashchange so we never miss a late-arriving hash token.
-  // Additionally, if the hash contains a token right now (e.g. the page was
-  // navigated to with a token already in the hash), call getSession explicitly
-  // to force Supabase to parse it — some mobile WebViews don't fire the event.
-  const _hash = window.location.hash;
-  if (_hash && (_hash.includes('access_token') || _hash.includes('refresh_token'))) {
-    // Hash is present on load — force a session parse.
-    // Supabase's detectSessionInUrl will pick it up; getSession flushes it.
-    await sb.auth.getSession();
-  } else {
-    await sb.auth.getSession();
-  }
+  // the OAuth redirect in a way that fires before DOMContentLoaded.
+  // For PKCE flow, the code arrives as ?code= query param (not a hash).
+  // We call getSession regardless so Supabase can exchange it.
+  const _hash   = window.location.hash;
+  const _search = window.location.search;
+  const _hasOAuthParams = (
+    (_hash && (_hash.includes('access_token') || _hash.includes('refresh_token'))) ||
+    (_search && (_search.includes('code=') || _search.includes('error=')))
+  );
+  // Always call getSession — it's instant from localStorage for returning users,
+  // and exchanges the PKCE code for a session when one is present.
+  await sb.auth.getSession();
 
   // Belt-and-suspenders: also catch any hash that arrives after page load
   // (some Android WebViews deliver it asynchronously).
+  // Also handles PKCE ?code= query param arriving late.
   window.addEventListener('hashchange', async () => {
     const h = window.location.hash;
     if (h && (h.includes('access_token') || h.includes('refresh_token'))) {
+      await sb.auth.getSession();
+    }
+  });
+  // Handle PKCE code= param — some mobile browsers fire popstate instead of hashchange
+  window.addEventListener('popstate', async () => {
+    if (window.location.search.includes('code=')) {
       await sb.auth.getSession();
     }
   });
