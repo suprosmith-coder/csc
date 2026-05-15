@@ -15,8 +15,9 @@ const sb = createClient(
       detectSessionInUrl: true,   // parse tokens from URL on redirect
       persistSession: true,
       autoRefreshToken: true,
-      flowType: 'pkce',           // PKCE uses ?code= query param instead of #access_token hash,
-                                  // which is more reliable and avoids hash-stripping race conditions
+      flowType: 'implicit',       // Implicit flow puts tokens in the hash (#access_token=...)
+                                  // instead of ?code= — required for GitHub Pages hash routing
+                                  // since ?code= gets appended BEFORE the # and causes a 404.
     }
   }
 );
@@ -461,7 +462,7 @@ async function initAuth() {
     const githubResetTimer = setTimeout(() => resetOAuthBtn(githubBtn, 'Continue with GitHub'), 8000);
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'github',
-      options: { redirectTo: 'https://suprosmith-coder.github.io/csc/#' }
+      options: { redirectTo: 'https://suprosmith-coder.github.io/csc/' }
     });
     if (error) {
       clearTimeout(githubResetTimer);
@@ -482,7 +483,7 @@ async function initAuth() {
     const { error } = await sb.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: 'https://suprosmith-coder.github.io/csc/#',
+        redirectTo: 'https://suprosmith-coder.github.io/csc/',
         queryParams: { access_type: 'offline', prompt: 'consent' },
       }
     });
@@ -527,7 +528,7 @@ async function initAuth() {
     signupBtn.disabled = true;
     const { error } = await sb.auth.signUp({
       email, password: pass,
-      options: { emailRedirectTo: 'https://suprosmith-coder.github.io/csc/#' }
+      options: { emailRedirectTo: 'https://suprosmith-coder.github.io/csc/' }
     });
     if (error) {
       setAuthStatus(error.message, true);
@@ -548,7 +549,7 @@ async function initAuth() {
     magicBtn.disabled = true;
     const { error } = await sb.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: 'https://suprosmith-coder.github.io/csc/#' }
+      options: { emailRedirectTo: 'https://suprosmith-coder.github.io/csc/' }
     });
     if (error) {
       setAuthStatus(error.message, true);
@@ -567,7 +568,7 @@ async function initAuth() {
       forgotBtn.textContent = 'Sending…';
       forgotBtn.disabled = true;
       const { error } = await sb.auth.resetPasswordForEmail(email, {
-        redirectTo: 'https://suprosmith-coder.github.io/csc/#'
+        redirectTo: 'https://suprosmith-coder.github.io/csc/'
       });
       if (!error) setAuthStatus('<i class="fa-solid fa-envelope" style="margin-right:6px"></i>Password reset email sent! Check your inbox.');
       else setAuthStatus(error.message, true);
@@ -664,13 +665,11 @@ async function initAuth() {
     // copy-pasting the URL don't expose or re-trigger tokens.
     // Handles both PKCE flow (?code=) and implicit flow (#access_token).
     try {
+      // Implicit flow: tokens arrive in the hash (#access_token=...).
+      // Clear the hash after Supabase has parsed it so the URL is clean.
       const url = new URL(window.location.href);
       const hasOAuthHash = url.hash && (url.hash.includes('access_token') || url.hash.includes('refresh_token'));
-      const hasOAuthCode = url.searchParams.has('code');
-      if (hasOAuthHash || hasOAuthCode) {
-        url.hash = '';
-        url.searchParams.delete('code');
-        url.searchParams.delete('state');
+      if (hasOAuthHash) {
         history.replaceState(null, '', url.pathname + (url.search && url.search !== '?' ? url.search : ''));
       }
     } catch (e) { /* non-critical */ }
@@ -2815,7 +2814,7 @@ function renderSettings(main) {
     await sb.auth.signOut();
   });
   $('#settings-change-pass').addEventListener('click', async () => {
-    const { error } = await sb.auth.resetPasswordForEmail(State.user.email, { redirectTo: 'https://suprosmith-coder.github.io/csc/#' });
+    const { error } = await sb.auth.resetPasswordForEmail(State.user.email, { redirectTo: 'https://suprosmith-coder.github.io/csc/' });
     if (!error) toast('Password reset email sent!', 'envelope');
     else toast('Error: ' + error.message, 'circle-exclamation');
   });
