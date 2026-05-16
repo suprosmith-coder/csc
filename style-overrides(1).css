@@ -1,0 +1,456 @@
+/* ============================================================
+   DEVIT — Style Overrides (Soft UI Polish)
+   style-overrides.css
+   Drop this alongside style.css and link it after.
+   ============================================================ */
+
+/* ── Easing variables ────────────────────────────────────────── */
+:root {
+  --ease-expo:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring:  cubic-bezier(0.34, 1.4, 0.64, 1);
+  --ease-smooth:  cubic-bezier(0.4, 0, 0.2, 1);
+  --transition:   0.2s var(--ease-expo);
+  --transition-smooth: 0.22s var(--ease-expo);
+
+  /* Refined surfaces */
+  --bg-surface-soft:   rgba(16, 18, 26, 0.92);
+  --bg-elevated-soft:  rgba(24, 28, 39, 0.9);
+  --border-soft:       rgba(255, 255, 255, 0.058);
+  --glow-cyan:         0 0 24px rgba(99, 217, 255, 0.18);
+  --glow-violet:       0 0 24px rgba(167, 139, 250, 0.18);
+
+  /* Softer radius scale */
+  --radius-sm:   8px;
+  --radius-md:   14px;
+  --radius-lg:   20px;
+  --radius-xl:   26px;
+
+  /* Softer shadow scale */
+  --shadow-xs:  0 1px 3px rgba(0,0,0,0.16), 0 1px 2px rgba(0,0,0,0.12);
+  --shadow-sm:  0 2px 8px rgba(0,0,0,0.2),  0 1px 3px rgba(0,0,0,0.14);
+  --shadow-md:  0 4px 20px rgba(0,0,0,0.25), 0 2px 6px rgba(0,0,0,0.14);
+  --shadow-lg:  0 8px 40px rgba(0,0,0,0.3),  0 4px 12px rgba(0,0,0,0.16);
+  --shadow-xl:  0 16px 64px rgba(0,0,0,0.4), 0 6px 20px rgba(0,0,0,0.18);
+}
+
+/* ── Global smooth rendering ─────────────────────────────────── */
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Remove harsh transitions; everything eases */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Topbar ──────────────────────────────────────────────────── */
+#topbar {
+  background: rgba(10, 11, 16, 0.88) !important;
+  backdrop-filter: blur(22px) saturate(1.4) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.4) !important;
+  border-bottom: 1px solid var(--border-soft) !important;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.028), 0 4px 28px rgba(0,0,0,0.22) !important;
+}
+
+/* Topbar search — softer */
+.topbar-search input {
+  background: rgba(255,255,255,0.05) !important;
+  border: 1px solid var(--border-soft) !important;
+  border-radius: 12px !important;
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition) !important;
+}
+.topbar-search input:focus {
+  background: rgba(255,255,255,0.07) !important;
+  border-color: rgba(99,217,255,0.3) !important;
+  box-shadow: 0 0 0 3px rgba(99,217,255,0.1) !important;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────── */
+#sidebar {
+  background: rgba(10, 11, 16, 0.9) !important;
+  border-right: 1px solid var(--border-soft) !important;
+}
+
+.sidebar-link {
+  border-radius: var(--radius-md) !important;
+  transition: background var(--transition), color var(--transition), transform var(--transition) !important;
+}
+.sidebar-link:hover {
+  background: rgba(255,255,255,0.05) !important;
+  transform: translateX(2px) !important;
+}
+.sidebar-link.active {
+  background: linear-gradient(135deg,
+    rgba(99,217,255,0.12) 0%,
+    rgba(167,139,250,0.07) 100%) !important;
+  border-left: 2px solid rgba(99,217,255,0.6) !important;
+  box-shadow: inset 0 1px 0 rgba(99,217,255,0.06) !important;
+}
+.sidebar-link.active i { color: var(--cyan) !important; }
+
+/* ── Post cards — soft, breathing ───────────────────────────── */
+.post-card {
+  border-radius: 20px !important;
+  border: 1px solid var(--border-soft) !important;
+  box-shadow: var(--shadow-sm) !important;
+  transition:
+    transform 0.22s var(--ease-expo),
+    box-shadow 0.22s var(--ease-expo),
+    border-color 0.22s var(--ease-expo) !important;
+  will-change: transform, box-shadow;
+  overflow: visible !important;
+}
+.post-card:hover {
+  transform: translateY(-3px) !important;
+  box-shadow: var(--shadow-lg) !important;
+  border-color: rgba(99, 217, 255, 0.15) !important;
+}
+.post-card:active {
+  transform: scale(0.993) translateY(-1px) !important;
+  box-shadow: var(--shadow-md) !important;
+  transition-duration: 0.1s !important;
+}
+
+/* ── Composer ────────────────────────────────────────────────── */
+.composer {
+  border-radius: 22px !important;
+  border: 1px solid var(--border-soft) !important;
+  box-shadow: var(--shadow-sm) !important;
+  transition: box-shadow var(--transition), border-color var(--transition) !important;
+}
+.composer:focus-within {
+  box-shadow: var(--shadow-md), 0 0 0 2px rgba(99,217,255,0.07) !important;
+  border-color: rgba(99,217,255,0.18) !important;
+}
+.composer-inner {
+  border-radius: 16px !important;
+}
+textarea.composer-textarea,
+.composer textarea {
+  border-radius: 14px !important;
+  transition: box-shadow var(--transition) !important;
+  resize: none;
+  line-height: 1.6;
+}
+
+/* ── Auth screen ─────────────────────────────────────────────── */
+.auth-card {
+  background: rgba(10, 11, 16, 0.85) !important;
+  backdrop-filter: blur(24px) saturate(1.6) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.6) !important;
+  border-radius: 28px !important;
+  border: 1px solid var(--border-soft) !important;
+  box-shadow: var(--shadow-xl) !important;
+}
+
+.auth-tabs {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid var(--border-soft) !important;
+  border-radius: 14px !important;
+  padding: 4px !important;
+}
+.auth-tab {
+  border-radius: 11px !important;
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition) !important;
+}
+.auth-tab.active {
+  background: rgba(255,255,255,0.07) !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+
+.auth-input {
+  border-radius: 14px !important;
+  transition: border-color var(--transition), box-shadow var(--transition) !important;
+}
+.auth-input:focus {
+  border-color: rgba(99,217,255,0.45) !important;
+  box-shadow: 0 0 0 4px rgba(99,217,255,0.1) !important;
+}
+
+.auth-btn-primary {
+  border-radius: 14px !important;
+  background: linear-gradient(135deg, var(--cyan), rgba(99,217,255,0.75)) !important;
+  color: var(--bg-void) !important;
+  font-weight: 700 !important;
+  transition: transform var(--ease-spring) 0.1s, box-shadow var(--transition) !important;
+}
+.auth-btn-primary:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 28px rgba(99,217,255,0.3) !important;
+}
+.auth-btn-primary:active { transform: scale(0.97) !important; }
+
+.auth-btn-github {
+  border-radius: 14px !important;
+  transition: transform var(--ease-spring) 0.1s, box-shadow var(--transition) !important;
+}
+.auth-btn-github:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.4) !important;
+}
+
+.auth-btn-google {
+  border-radius: 14px !important;
+  transition: transform var(--ease-spring) 0.1s, box-shadow var(--transition) !important;
+}
+.auth-btn-google:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.3) !important;
+}
+
+.auth-btn-magic {
+  border-radius: 14px !important;
+  border: 1px solid var(--border-soft) !important;
+}
+
+/* ── Right sidebar widgets ───────────────────────────────────── */
+#rightbar {
+  background: rgba(10, 11, 16, 0.88) !important;
+  border-left: 1px solid var(--border-soft) !important;
+}
+
+.widget {
+  border-radius: 20px !important;
+  border: 1px solid var(--border-soft) !important;
+  box-shadow: var(--shadow-xs) !important;
+  background: rgba(16, 18, 26, 0.85) !important;
+  backdrop-filter: blur(8px) !important;
+  overflow: hidden;
+  transition: box-shadow var(--transition), border-color var(--transition) !important;
+}
+.widget:hover {
+  box-shadow: var(--shadow-sm) !important;
+  border-color: rgba(255,255,255,0.08) !important;
+}
+.widget-title {
+  font-size: 12px !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+}
+
+/* ── Modal ───────────────────────────────────────────────────── */
+.modal-overlay {
+  backdrop-filter: blur(16px) saturate(1.3) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(1.3) !important;
+  background: rgba(3, 4, 6, 0.65) !important;
+}
+.modal {
+  border-radius: 26px !important;
+  box-shadow: var(--shadow-xl) !important;
+  border: 1px solid rgba(255,255,255,0.07) !important;
+  animation: modalIn 0.32s var(--ease-expo) !important;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.94) translateY(12px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.modal-header {
+  border-bottom: 1px solid var(--border-soft) !important;
+}
+
+/* ── Bottom nav ──────────────────────────────────────────────── */
+#bottom-nav {
+  background: rgba(10, 11, 16, 0.92) !important;
+  border-top: 1px solid var(--border-soft) !important;
+  backdrop-filter: blur(22px) saturate(1.4) !important;
+  -webkit-backdrop-filter: blur(22px) saturate(1.4) !important;
+  box-shadow: 0 -4px 28px rgba(0,0,0,0.22) !important;
+}
+
+.bnav-btn {
+  border-radius: 14px !important;
+  transition: background var(--transition), color var(--transition), transform 0.2s var(--ease-spring) !important;
+}
+.bnav-btn.active {
+  color: var(--cyan) !important;
+  transform: scale(1.1) !important;
+}
+.bnav-btn:active { transform: scale(0.93) !important; }
+
+/* ── FAB (mobile) ────────────────────────────────────────────── */
+#mobile-fab {
+  border-radius: 22px !important;
+  background: linear-gradient(135deg, var(--cyan), rgba(99,217,255,0.7)) !important;
+  color: var(--bg-void) !important;
+  box-shadow: 0 8px 32px rgba(99,217,255,0.38), 0 2px 8px rgba(0,0,0,0.3) !important;
+  transition:
+    transform 0.28s var(--ease-spring),
+    box-shadow var(--transition) !important;
+}
+#mobile-fab:hover {
+  transform: scale(1.1) rotate(8deg) !important;
+  box-shadow: 0 12px 40px rgba(99,217,255,0.5) !important;
+}
+#mobile-fab:active { transform: scale(0.92) rotate(0deg) !important; }
+
+/* ── Toast ───────────────────────────────────────────────────── */
+.toast {
+  border-radius: 16px !important;
+  box-shadow: var(--shadow-lg) !important;
+  backdrop-filter: blur(14px) !important;
+  border: 1px solid rgba(255,255,255,0.07) !important;
+  animation: toastIn 0.36s var(--ease-expo) !important;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ── Post actions ────────────────────────────────────────────── */
+.post-action {
+  border-radius: 10px !important;
+  transition: background var(--transition), color var(--transition), transform var(--transition) !important;
+}
+.post-action:hover { transform: scale(1.06) !important; }
+.post-action:active { transform: scale(0.94) !important; }
+
+/* Like button pop */
+.like-btn.liked {
+  animation: likePop 0.4s var(--ease-spring) !important;
+}
+@keyframes likePop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.35); }
+  70%  { transform: scale(0.9); }
+  100% { transform: scale(1); }
+}
+
+/* ── Tags/chips ──────────────────────────────────────────────── */
+.post-tag {
+  border-radius: 8px !important;
+  transition: background var(--transition), color var(--transition) !important;
+}
+.post-tag:hover {
+  background: var(--cyan-dim) !important;
+  color: var(--cyan) !important;
+}
+
+/* ── Profile avatar ──────────────────────────────────────────── */
+.profile-avatar-circle {
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.07) !important;
+  transition: box-shadow 0.22s var(--ease-expo) !important;
+}
+.profile-avatar-circle:hover {
+  box-shadow: 0 0 0 3px rgba(99,217,255,0.32) !important;
+}
+
+/* ── Feed layout spacing ─────────────────────────────────────── */
+.feed-col > * + * {
+  margin-top: 10px;
+}
+.post-card + .post-card { margin-top: 10px; }
+
+/* ── View tabs ───────────────────────────────────────────────── */
+.view-tabs {
+  border-radius: 16px !important;
+  padding: 4px !important;
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid var(--border-soft) !important;
+  gap: 2px !important;
+}
+.view-tab {
+  border-radius: 12px !important;
+  transition: background var(--transition), color var(--transition) !important;
+}
+.view-tab.active {
+  background: rgba(255,255,255,0.07) !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+
+/* ── Code blocks inside posts ────────────────────────────────── */
+.post-code, pre, code {
+  border-radius: 12px !important;
+  font-size: 12.5px !important;
+  background: rgba(99,217,255,0.04) !important;
+  border: 1px solid rgba(99,217,255,0.1) !important;
+}
+
+/* ── Presence bar ────────────────────────────────────────────── */
+#presence-bar {
+  height: 2px !important;
+  border-radius: 0 0 2px 2px !important;
+  background: linear-gradient(90deg, var(--cyan), var(--violet)) !important;
+}
+
+/* ── Ripple effect ───────────────────────────────────────────── */
+.ripple {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(99, 217, 255, 0.12);
+  transform: scale(0);
+  animation: rippleOut 0.5s var(--ease-expo);
+  pointer-events: none;
+}
+@keyframes rippleOut {
+  to { transform: scale(2.5); opacity: 0; }
+}
+
+/* ── Profile quick view card ─────────────────────────────────── */
+#profile-quick-card {
+  border-radius: 26px !important;
+  box-shadow: var(--shadow-xl) !important;
+  border: 1px solid rgba(255,255,255,0.07) !important;
+  animation: modalIn 0.3s var(--ease-expo) !important;
+}
+
+/* ── Notification items ──────────────────────────────────────── */
+.notif-item {
+  border-radius: 14px !important;
+  transition: background var(--transition) !important;
+}
+.notif-item:hover { background: rgba(255,255,255,0.04) !important; }
+
+/* ── Follow button ───────────────────────────────────────────── */
+.follow-btn {
+  border-radius: 12px !important;
+  transition: transform 0.2s var(--ease-spring), box-shadow var(--transition) !important;
+}
+.follow-btn:hover { transform: translateY(-1px) !important; }
+.follow-btn:active { transform: scale(0.95) !important; }
+
+/* ── DM / message bubbles ────────────────────────────────────── */
+.msg-bubble {
+  border-radius: 18px !important;
+  box-shadow: var(--shadow-xs) !important;
+}
+.msg-bubble.mine { border-bottom-right-radius: 4px !important; }
+.msg-bubble.theirs { border-bottom-left-radius: 4px !important; }
+
+/* ── Scrollbar polish ────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.1);
+  border-radius: 10px;
+  transition: background 0.2s;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* ── Light theme overrides ───────────────────────────────────── */
+[data-theme="light"] {
+  --border-soft: rgba(0,0,0,0.07);
+}
+[data-theme="light"] .post-card {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04) !important;
+}
+[data-theme="light"] .post-card:hover {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.1) !important;
+}
+[data-theme="light"] #topbar,
+[data-theme="light"] #bottom-nav {
+  background: rgba(255,255,255,0.9) !important;
+}
+[data-theme="light"] .widget {
+  background: rgba(255,255,255,0.85) !important;
+}
+
+/* ── Motion preferences ──────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
