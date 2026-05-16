@@ -1109,6 +1109,7 @@ ul, ol { list-style: none; }
   padding: 12px 16px; border-bottom: 1px solid var(--border);
   display: flex; align-items: center; gap: 10px;
 }
+.dm-back-btn { display: none; background: none; border: none; color: var(--text-primary); font-size: 18px; cursor: pointer; padding: 4px 8px 4px 0; flex-shrink: 0; }
 .dm-messages { flex: 1; overflow-y: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; }
 .dm-own { flex-direction: row-reverse; }
 .dm-own .msg-avatar { display: none; }
@@ -2039,7 +2040,20 @@ ul, ol { list-style: none; }
 
   /* Community/messages layouts */
   .community-sidebar { display: none; }
-  .messages-layout .conversations-list { width: 100%; }
+  /* Mobile DM: full-width list; dm-view slides in as an overlay panel */
+  .messages-layout .conversations-list { width: 100%; flex-shrink: 0; }
+  .messages-layout .dm-view {
+    position: fixed; inset: 0; top: var(--topbar-h);
+    background: var(--bg-base); z-index: 300;
+    transform: translateX(100%); transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+    display: flex; flex-direction: column;
+  }
+  .messages-layout .dm-view.dm-view-open { transform: translateX(0); }
+  /* Back button shown only on mobile */
+  .dm-back-btn { display: flex !important; }
+  /* Hide bottom nav when DM is open so keyboard doesn't fight it */
+  body.dm-open #bottom-nav { display: none; }
+  body.dm-open #mobile-fab { display: none; }
 }
 
 /* ── Tablet adjustments ────────────────────────────────────── */

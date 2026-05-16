@@ -1,75 +1,63 @@
-/* ============================================================
-   CYANET — Service Worker (PWA offline support)
-   sw.js
-   ============================================================ */
+// Devit Service Worker — Web Push + Offline Shell Cache
+const CACHE = 'devit-v1';
+const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/devit.png'];
 
-const CACHE_NAME = 'cyanet-v1';
-
-// Assets to cache on install
-const STATIC_ASSETS = [
-  './',
-  './index.html',
-  './style.css',
-  './app.js',
-  'https://fonts.googleapis.com/css2?family=Cabinet+Grotesk:wght@400;500;600;700;800;900&family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500;600&display=swap',
-  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js',
-];
-
-/* Install — cache static shell */
-self.addEventListener('install', event => {
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL).catch(() => {})));
   self.skipWaiting();
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => {
-      return cache.addAll(STATIC_ASSETS).catch(err => {
-        console.warn('[SW] Some assets failed to cache:', err);
-      });
+});
+
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(keys =>
+    Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
+  ));
+  self.clients.claim();
+});
+
+// Push event — show notification
+self.addEventListener('push', e => {
+  let data = { title: 'Devit', body: 'You have a new notification', icon: '/devit.png', url: '/' };
+  try { data = { ...data, ...e.data.json() }; } catch (_) {}
+
+  e.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: data.icon || '/devit.png',
+      badge: '/devit.png',
+      data: { url: data.url || '/' },
+      vibrate: [100, 50, 100],
+      tag: data.tag || 'devit-notif',
+      renotify: true,
     })
   );
 });
 
-/* Activate — clear old caches */
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(
-        keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))
-      )
-    ).then(() => self.clients.claim())
+// Notification click — focus or open app
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const target = e.notification.data?.url || '/';
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      for (const client of list) {
+        if (client.url.includes(self.location.origin) && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      return clients.openWindow(target);
+    })
   );
 });
 
-/* Fetch — Network first, fall back to cache */
-self.addEventListener('fetch', event => {
-  const { request } = event;
-  const url = new URL(request.url);
-
-  // Never intercept Supabase API calls — always go to network
-  if (url.hostname.includes('supabase.co') ||
-      url.hostname.includes('github.com') ||
-      url.hostname.includes('api.github.com')) {
-    return;
-  }
-
-  // For navigation requests, serve index.html (SPA fallback)
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request).catch(() =>
-        caches.match('./index.html')
-      )
-    );
-    return;
-  }
-
-  // Network-first with cache fallback for static assets
-  event.respondWith(
-    fetch(request)
-      .then(response => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, clone));
-        }
-        return response;
-      })
-      .catch(() => caches.match(request))
+// Network-first fetch with cache fallback for shell assets
+self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
+  // Don't intercept Supabase or external requests
+  if (!e.request.url.startsWith(self.location.origin)) return;
+  e.respondWith(
+    fetch(e.request).then(res => {
+      const clone = res.clone();
+      caches.open(CACHE).then(c => c.put(e.request, clone));
+      return res;
+    }).catch(() => caches.match(e.request))
   );
 });

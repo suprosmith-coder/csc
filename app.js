@@ -1001,6 +1001,9 @@ async function buildApp() {
   initPresenceRealtime();
   initGlobalNotifSub();
   loadUnreadCounts();
+  registerServiceWorker();
+  // Delay push prompt slightly so it doesn't interrupt first load
+  setTimeout(() => registerPushNotifications(), 3000);
 }
 
 function initGlobalNotifSub() {
@@ -1209,26 +1212,37 @@ async function runSearch(query) {
   overlay.id = 'search-overlay';
   overlay.style.cssText = `position:fixed;top:56px;left:50%;transform:translateX(-50%);width:560px;max-width:90vw;background:var(--bg-surface);border:1px solid var(--border);border-radius:var(--radius-lg);z-index:900;box-shadow:0 20px 60px rgba(0,0,0,0.6);overflow:hidden;max-height:70vh;overflow-y:auto`;
 
-  overlay.innerHTML = `<div style="padding:12px 16px;font-size:12px;color:var(--text-muted);border-bottom:1px solid var(--border)">Searching for "${query}"…</div>`;
+  overlay.innerHTML = `<div style="padding:12px 16px;font-size:12px;color:var(--text-muted);border-bottom:1px solid var(--border)">Searching for "${escapeHtml(query)}"…</div>`;
   document.body.appendChild(overlay);
 
-  // Click outside to close
   const closeOnClick = e => { if (!overlay.contains(e.target) && e.target !== $('#search-input')) { overlay.remove(); document.removeEventListener('click', closeOnClick); } };
   setTimeout(() => document.addEventListener('click', closeOnClick), 100);
 
-  // Search profiles
-  const { data: profiles } = await sb
-    .from('profiles')
-    .select('id, username, display_name, avatar_url, bio')
-    .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`)
-    .limit(5);
+  // Full-text search via Postgres tsvector RPC (falls back gracefully to ilike)
+  const tsQuery = query.trim().split(/\s+/).filter(Boolean).join(' & ');
 
-  // Search posts
-  const { data: posts } = await sb
-    .from('posts')
-    .select('id, content, created_at, author_id, profiles(username, display_name, avatar_url)')
-    .ilike('content', `%${query}%`)
-    .limit(5);
+  const [profilesRes, postsRes] = await Promise.all([
+    sb.from('profiles').select('id, username, display_name, avatar_url, bio')
+      .or(`username.ilike.%${query}%,display_name.ilike.%${query}%`).limit(5),
+    sb.rpc('search_posts_fts', { query_text: tsQuery }).limit ? null
+      : sb.from('posts')
+          .select('id, content, created_at, author_id, profiles(username, display_name, avatar_url)')
+          .ilike('content', `%${query}%`).limit(5),
+  ]);
+
+  // Try FTS RPC first, fall back to ilike
+  let posts;
+  const { data: ftsPosts, error: ftsErr } = await sb.rpc('search_posts_fts', { query_text: tsQuery, max_results: 5 });
+  if (!ftsErr && ftsPosts) {
+    posts = ftsPosts;
+  } else {
+    const { data: ilikePosts } = await sb.from('posts')
+      .select('id, content, created_at, author_id, profiles(username, display_name, avatar_url)')
+      .ilike('content', `%${query}%`).limit(5);
+    posts = ilikePosts;
+  }
+
+  const profiles = profilesRes?.data;
 
   let html = '';
   if (profiles?.length) {
@@ -1253,19 +1267,11 @@ async function runSearch(query) {
 
   overlay.innerHTML = html;
 
-  // Wire up click handlers (no inline event handlers — avoids XSS)
   overlay.querySelectorAll('.search-result-item[data-uid]').forEach(item => {
-    item.addEventListener('click', () => {
-      overlay.remove();
-      renderProfile($('#main'), item.dataset.uid);
-    });
+    item.addEventListener('click', () => { overlay.remove(); renderProfile($('#main'), item.dataset.uid); });
   });
   overlay.querySelectorAll('.search-result-item[data-pid]').forEach(item => {
-    item.addEventListener('click', () => {
-      overlay.remove();
-      // Navigate to feed and open the post thread
-      navigateTo('feed');
-    });
+    item.addEventListener('click', () => { overlay.remove(); navigateTo('feed'); });
   });
 }
 
@@ -1986,7 +1992,10 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
         </div>
         <div class="post-time">${timeAgo(post.created_at)}</div>
       </div>
-      ${post.author_id === State.user.id ? `<button class="post-delete-btn" data-pid="${post.id}" title="Delete post" style="margin-left:auto;color:var(--text-muted);font-size:14px;padding:4px 8px;border-radius:6px;transition:color 0.15s"><i class="fa-solid fa-xmark"></i></button>` : ''}
+      ${post.author_id === State.user.id
+        ? `<button class="post-delete-btn" data-pid="${post.id}" title="Delete post" style="margin-left:auto;color:var(--text-muted);font-size:14px;padding:4px 8px;border-radius:6px;transition:color 0.15s"><i class="fa-solid fa-xmark"></i></button>`
+        : `<button class="post-more-btn" data-pid="${post.id}" data-uid="${profile?.id}" title="More options" style="margin-left:auto;color:var(--text-muted);font-size:14px;padding:4px 8px;border-radius:6px;transition:color 0.15s"><i class="fa-solid fa-ellipsis"></i></button>`
+      }
     </div>
     ${contentHtml}
     <div class="post-actions">
@@ -2057,6 +2066,15 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
     e.stopPropagation();
     navigator.clipboard?.writeText(window.location.origin + '/post/' + post.id).then(() => toast('Link copied!', 'link'));
   });
+
+  // Report / Block (other users' posts)
+  const moreBtn = $('.post-more-btn', card);
+  if (moreBtn) {
+    moreBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      openPostMoreMenu(moreBtn, post.id, profile?.id);
+    });
+  }
 
   // PFP / author click → quick profile view
   card.querySelectorAll('.pfp-clickable[data-uid]').forEach(el => {
@@ -2810,8 +2828,16 @@ async function openDM(convoId, otherUserId, container) {
   const isOnline = State.onlineUsers.has(otherUserId);
   const color = avatarColor(other?.display_name || other?.username || '?');
 
+  // Mobile: slide the dm-view panel into view
+  const isMobile = window.innerWidth <= 640;
+  if (isMobile) {
+    container.classList.add('dm-view-open');
+    document.body.classList.add('dm-open');
+  }
+
   container.innerHTML = `
     <div class="dm-header">
+      <button class="dm-back-btn" id="dm-back-btn" aria-label="Back to conversations"><i class="fa-solid fa-arrow-left"></i></button>
       <div style="position:relative">
         ${avatarHtml(other, 36)}
         <div class="conv-online" style="display:${isOnline ? 'block' : 'none'}"></div>
@@ -2884,6 +2910,15 @@ async function openDM(convoId, otherUserId, container) {
 
   $('#dm-send-btn', container).addEventListener('click', sendDM);
   $('#dm-input', container).addEventListener('keydown', e => { if (e.key === 'Enter') sendDM(); });
+
+  // Mobile back button
+  const backBtn = $('#dm-back-btn', container);
+  if (backBtn) {
+    backBtn.addEventListener('click', () => {
+      container.classList.remove('dm-view-open');
+      document.body.classList.remove('dm-open');
+    });
+  }
 }
 
 function buildDMMessage(msg, other, color, isSelf = null) {
@@ -4093,6 +4128,162 @@ function openProfileEditModal(profile) {
       navigateTo('profile');
     }
   });
+}
+
+/* ── Content Moderation ─────────────────────────────────────── */
+
+function openPostMoreMenu(anchorBtn, postId, authorId) {
+  // Remove any existing menu
+  document.getElementById('post-more-menu')?.remove();
+  const menu = document.createElement('div');
+  menu.id = 'post-more-menu';
+  menu.style.cssText = `position:fixed;z-index:1000;background:var(--bg-surface);border:1px solid var(--border);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,0.5);min-width:170px;overflow:hidden;font-size:13px`;
+  menu.innerHTML = `
+    <button class="post-more-item" id="pmi-report-post" style="display:flex;align-items:center;gap:10px;width:100%;padding:12px 16px;background:none;border:none;color:var(--text-primary);cursor:pointer;transition:background 0.15s">
+      <i class="fa-solid fa-flag" style="color:var(--amber,#fb923c)"></i> Report post
+    </button>
+    <button class="post-more-item" id="pmi-block-user" style="display:flex;align-items:center;gap:10px;width:100%;padding:12px 16px;background:none;border:none;color:var(--rose,#f87171);cursor:pointer;transition:background 0.15s">
+      <i class="fa-solid fa-ban"></i> Block user
+    </button>
+  `;
+  menu.querySelectorAll('.post-more-item').forEach(b => {
+    b.addEventListener('mouseenter', () => b.style.background = 'var(--bg-elevated)');
+    b.addEventListener('mouseleave', () => b.style.background = '');
+  });
+  document.body.appendChild(menu);
+
+  // Position near button
+  const rect = anchorBtn.getBoundingClientRect();
+  const mw = 170;
+  let left = rect.right - mw;
+  if (left < 8) left = 8;
+  menu.style.top = (rect.bottom + 4) + 'px';
+  menu.style.left = left + 'px';
+
+  menu.querySelector('#pmi-report-post').addEventListener('click', () => { menu.remove(); openReportModal('post', postId); });
+  menu.querySelector('#pmi-block-user').addEventListener('click', () => { menu.remove(); confirmBlockUser(authorId); });
+
+  const dismiss = e => { if (!menu.contains(e.target) && e.target !== anchorBtn) { menu.remove(); document.removeEventListener('pointerdown', dismiss); } };
+  setTimeout(() => document.addEventListener('pointerdown', dismiss), 50);
+}
+
+function openReportModal(type, targetId) {
+  const modal = $('#modal-overlay');
+  $('#modal-title-text').textContent = 'Report ' + (type === 'post' ? 'Post' : 'User');
+  modal.classList.add('open');
+
+  const reasons = ['Spam or misleading', 'Harassment or bullying', 'Hate speech', 'Violent or harmful content', 'Misinformation', 'Other'];
+  $('#modal-body').innerHTML = `
+    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+      <p style="font-size:13px;color:var(--text-secondary);margin:0">Why are you reporting this ${type}?</p>
+      <div id="report-reasons" style="display:flex;flex-direction:column;gap:6px">
+        ${reasons.map((r, i) => `<label style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;border:1px solid var(--border);transition:border-color 0.15s" class="report-reason-label">
+          <input type="radio" name="report-reason" value="${escapeHtml(r)}" style="accent-color:var(--cyan)"> <span style="font-size:13px">${escapeHtml(r)}</span>
+        </label>`).join('')}
+      </div>
+      <textarea id="report-extra" class="auth-input" placeholder="Additional details (optional)" rows="3" style="resize:vertical;font-size:13px"></textarea>
+      <button id="submit-report-btn" class="auth-btn-primary" style="margin-top:4px"><i class="fa-solid fa-flag"></i> Submit Report</button>
+      <div id="report-status" style="display:none;font-size:12px;text-align:center;color:var(--text-muted)"></div>
+    </div>
+  `;
+
+  $$('.report-reason-label').forEach(l => {
+    l.querySelector('input').addEventListener('change', () => {
+      $$('.report-reason-label').forEach(x => x.style.borderColor = 'var(--border)');
+      l.style.borderColor = 'var(--cyan)';
+    });
+  });
+
+  $('#submit-report-btn').addEventListener('click', async () => {
+    const reason = document.querySelector('input[name="report-reason"]:checked')?.value;
+    if (!reason) { toast('Please select a reason', 'circle-exclamation'); return; }
+    const extra = $('#report-extra').value.trim();
+    const btn = $('#submit-report-btn');
+    btn.disabled = true; btn.textContent = 'Submitting…';
+    const { error } = await sb.from('reports').insert({
+      reporter_id: State.user.id,
+      target_type: type,
+      target_id: targetId,
+      reason,
+      details: extra || null,
+    });
+    if (error) {
+      btn.disabled = false; btn.textContent = 'Submit Report';
+      toast('Failed: ' + error.message, 'circle-exclamation');
+    } else {
+      modal.classList.remove('open');
+      toast('Report submitted. Thank you.', 'flag');
+    }
+  });
+}
+
+async function confirmBlockUser(userId) {
+  if (!userId) return;
+  const { data: profile } = await sb.from('profiles').select('display_name, username').eq('id', userId).single();
+  const name = profile?.display_name || profile?.username || 'this user';
+  const modal = $('#modal-overlay');
+  $('#modal-title-text').textContent = 'Block User';
+  modal.classList.add('open');
+  $('#modal-body').innerHTML = `
+    <div style="padding:16px;display:flex;flex-direction:column;gap:16px">
+      <p style="font-size:14px;color:var(--text-primary);margin:0">Block <strong>${escapeHtml(name)}</strong>?</p>
+      <p style="font-size:13px;color:var(--text-secondary);margin:0">They won't be able to see your posts or DM you. Their content will be hidden from your feed.</p>
+      <div style="display:flex;gap:10px">
+        <button id="confirm-block-btn" style="flex:1;padding:10px;border-radius:8px;background:var(--rose,#f87171);border:none;color:#fff;font-weight:700;cursor:pointer;font-size:13px">Block</button>
+        <button id="cancel-block-btn" style="flex:1;padding:10px;border-radius:8px;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);font-weight:600;cursor:pointer;font-size:13px">Cancel</button>
+      </div>
+    </div>
+  `;
+  $('#confirm-block-btn').addEventListener('click', async () => {
+    const { error } = await sb.from('blocks').insert({ blocker_id: State.user.id, blocked_id: userId });
+    modal.classList.remove('open');
+    if (error && error.code !== '23505') { toast('Error: ' + error.message, 'circle-exclamation'); return; }
+    toast(`${name} blocked.`, 'ban');
+    // Remove their cards from current view
+    document.querySelectorAll(`.post-card [data-uid="${userId}"]`).forEach(el => el.closest('.post-card')?.remove());
+  });
+  $('#cancel-block-btn').addEventListener('click', () => modal.classList.remove('open'));
+}
+
+/* ── Web Push Notifications ──────────────────────────────────── */
+// VAPID public key — replace with your own from: npx web-push generate-vapid-keys
+const VAPID_PUBLIC_KEY = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBkYIL55lLpurs1A';
+
+async function registerPushNotifications() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const existing = await reg.pushManager.getSubscription();
+    if (existing) return; // already subscribed
+
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') return;
+
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+    });
+    // Save subscription to Supabase
+    await sb.from('push_subscriptions').upsert({
+      user_id: State.user.id,
+      endpoint: sub.endpoint,
+      keys: JSON.stringify({ p256dh: btoa(String.fromCharCode(...new Uint8Array(sub.getKey('p256dh')))), auth: btoa(String.fromCharCode(...new Uint8Array(sub.getKey('auth')))) }),
+    }, { onConflict: 'user_id,endpoint' });
+  } catch (err) { console.warn('Push registration failed:', err); }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    await navigator.serviceWorker.register('./sw.js');
+  } catch (err) { console.warn('SW registration failed:', err); }
 }
 
 /* ── Boot ───────────────────────────────────────────────────── */
