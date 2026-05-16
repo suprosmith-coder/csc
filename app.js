@@ -4106,7 +4106,7 @@ function openProfileEditModal(profile) {
       const ext = (newAvatarFile.name.split('.').pop() || 'jpg').toLowerCase();
       // Keep path flat: USER_ID/avatar.ext — matches RLS policy foldername[1] = auth.uid()
       const path = `${State.user.id}/avatar.${ext}`;
-      const avErr = await storageUpload('avatars', path, newAvatarFile);
+      const avErr = await storageUpload('post-images', path, newAvatarFile);
       if (avErr) {
         btn.disabled = false; btn.textContent = 'Save Changes';
         statusEl.style.display = 'block';
@@ -4114,14 +4114,14 @@ function openProfileEditModal(profile) {
         statusEl.textContent = 'Avatar upload failed: ' + (avErr.message || avErr.error || JSON.stringify(avErr));
         return;
       }
-      avatarUrl = sb.storage.from('avatars').getPublicUrl(path).data.publicUrl + '?t=' + Date.now();
+      avatarUrl = sb.storage.from('post-images').getPublicUrl(path).data.publicUrl + '?t=' + Date.now();
     }
 
     // Upload new banner — path: USER_ID/banner.ext (still under user folder, RLS matches)
     if (newBannerFile) {
       const ext = (newBannerFile.name.split('.').pop() || 'jpg').toLowerCase();
       const path = `${State.user.id}/banner.${ext}`;
-      const bnErr = await storageUpload('avatars', path, newBannerFile);
+      const bnErr = await storageUpload('post-images', path, newBannerFile);
       if (bnErr) {
         btn.disabled = false; btn.textContent = 'Save Changes';
         statusEl.style.display = 'block';
@@ -4129,7 +4129,7 @@ function openProfileEditModal(profile) {
         statusEl.textContent = 'Banner upload failed: ' + (bnErr.message || bnErr.error || JSON.stringify(bnErr));
         return;
       }
-      bannerUrl = sb.storage.from('avatars').getPublicUrl(path).data.publicUrl + '?t=' + Date.now();
+      bannerUrl = sb.storage.from('post-images').getPublicUrl(path).data.publicUrl + '?t=' + Date.now();
     }
 
     const tech_stack = document.getElementById('edit-tech').value.split(',').map(t => t.trim()).filter(Boolean);
