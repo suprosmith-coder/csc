@@ -1284,15 +1284,15 @@ function closeSearch() {
 function buildSidebar() {
   const sb_el = $('#sidebar');
   const links = [
-    { id: 'feed',          icon: '<i class="fa-solid fa-terminal"></i>', label: 'Activity' },
-    { id: 'explore',       icon: '<i class="fa-solid fa-magnifying-glass"></i>', label: 'Discover' },
-    { id: 'snippets',      icon: '<i class="fa-solid fa-code"></i>', label: 'Snippets' },
-    { id: 'links',         icon: '<i class="fa-solid fa-code-pull-request"></i>', label: 'Links', badge: 0 },
-    { id: 'notifications', icon: '<i class="fa-solid fa-bell"></i>', label: 'Alerts', badge: State.unreadNotifs },
-    { id: 'messages',      icon: '<i class="fa-solid fa-message"></i>', label: 'DMs', badge: State.unreadMessages },
-    { id: 'profile',       icon: '<i class="fa-solid fa-circle-user"></i>', label: 'Profile' },
-    { id: 'bookmarks',     icon: '<i class="fa-solid fa-bookmark"></i>', label: 'Saved' },
-    { id: 'settings',      icon: '<i class="fa-solid fa-sliders"></i>', label: 'Settings' },
+    { id: 'feed',          icon: '<i class="fa-solid fa-house"></i>',        label: 'Activity' },
+    { id: 'explore',       icon: '<i class="fa-solid fa-compass"></i>',       label: 'Discover' },
+    { id: 'snippets',      icon: '<i class="fa-solid fa-film"></i>',          label: 'Snippets' },
+    { id: 'links',         icon: '<i class="fa-solid fa-users"></i>',         label: 'Links', badge: 0 },
+    { id: 'notifications', icon: '<i class="fa-solid fa-bell"></i>',          label: 'Alerts', badge: State.unreadNotifs },
+    { id: 'messages',      icon: '<i class="fa-solid fa-message"></i>',       label: 'DMs', badge: State.unreadMessages },
+    { id: 'profile',       icon: '<i class="fa-solid fa-user"></i>',          label: 'Profile' },
+    { id: 'bookmarks',     icon: '<i class="fa-solid fa-bookmark"></i>',      label: 'Saved' },
+    { id: 'settings',      icon: '<i class="fa-solid fa-gear"></i>',          label: 'Settings' },
   ];
 
   let html = `<div class="sidebar-section-label">Workspace</div>`;
