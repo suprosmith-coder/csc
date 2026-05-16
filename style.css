@@ -2401,7 +2401,96 @@ button, .sidebar-link, .post-action, .auth-tab, .view-tab {
   .composer { padding: 12px; }
 }
 
-/* Topbar rightbar toggle — hidden by default on desktop */
+/* ── Pull-to-Refresh Indicator ──────────────────────────────── */
+.ptr-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  overflow: hidden;
+  height: 0;
+  opacity: 0;
+  transition: height 0.15s ease, opacity 0.15s ease;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-base);
+  border-bottom: 1px solid var(--border);
+}
+.ptr-icon {
+  color: var(--cyan);
+  font-size: 16px;
+  transition: transform 0.2s ease;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Snippets Swipe Hint Animations ────────────────────────── */
+@keyframes swipeHintFade {
+  0%   { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { opacity: 0; pointer-events: none; }
+}
+@keyframes bounceUp {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-6px); }
+}
+
+/* ── Focus management: main gets focus on nav, no visible ring ─ */
+#main:focus { outline: none; }
+
+/* ── Accessibility: improved contrast on muted text ─────────── */
+/* --text-muted was #4a5070 (~3.4:1 on dark bg) — nudge up to pass AA */
+:root {
+  --text-muted: #606880; /* improved from #4a5070 — better contrast on bg-void */
+}
+[data-theme="light"] {
+  --text-muted: #6b7280; /* keeps existing light-mode value */
+}
+
+/* Skip-to-content link (screen reader / keyboard users) */
+.skip-link {
+  position: fixed;
+  top: -100%;
+  left: 16px;
+  z-index: 9999;
+  padding: 10px 20px;
+  background: var(--cyan);
+  color: var(--bg-void);
+  font-weight: 700;
+  font-size: 14px;
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  text-decoration: none;
+  transition: top 0.2s;
+}
+.skip-link:focus {
+  top: 0;
+}
+
+/* ── ARIA tab keyboard focus styles ─────────────────────────── */
+.view-tab:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Bottom nav button focus ────────────────────────────────── */
+.bnav-btn:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}
+
+/* ── Auth input better focus ring ───────────────────────────── */
+.auth-input:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px var(--cyan-glow);
+}
+
+/* ── Topbar rightbar toggle — hidden by default on desktop */
 .topbar-rightbar-toggle {
   display: none;
   width: 36px; height: 36px;

@@ -990,6 +990,9 @@ async function ensureProfile(authUser) {
 /* ── Build App ──────────────────────────────────────────────── */
 async function buildApp() {
   await bootstrapSchema();
+  // Remove aria-hidden now that app is active
+  const appEl = document.getElementById('app');
+  if (appEl) appEl.removeAttribute('aria-hidden');
   buildTopbar();
   buildSidebar();
   buildRightbar();
@@ -1457,6 +1460,39 @@ async function loadTrendingTags() {
 }
 
 /* ── Navigation ─────────────────────────────────────────────── */
+// ── Dynamic meta tags for SPA ─────────────────────────────────
+function updatePageMeta({ title, description } = {}) {
+  const siteName = 'Devit';
+  const baseDesc = 'The social platform built by developers, for developers.';
+  const pageTitle = title ? `${title} · ${siteName}` : `${siteName} — Code. Connect. Ship.`;
+  const pageDesc  = description || baseDesc;
+
+  document.title = pageTitle;
+  const metas = {
+    'description':          pageDesc,
+    'og:title':             pageTitle,
+    'og:description':       pageDesc,
+    'twitter:title':        pageTitle,
+    'twitter:description':  pageDesc,
+  };
+  Object.entries(metas).forEach(([key, val]) => {
+    const el = document.querySelector(`meta[name="${key}"], meta[property="${key}"]`);
+    if (el) el.setAttribute('content', val);
+  });
+}
+
+const viewMeta = {
+  feed:          { title: 'Home Feed' },
+  explore:       { title: 'Explore', description: 'Discover developers, communities, and trending topics on Devit.' },
+  snippets:      { title: 'Snippets', description: 'Short-form code videos from the developer community.' },
+  links:         { title: 'Links', description: 'Connect with other developers on Devit.' },
+  notifications: { title: 'Notifications' },
+  messages:      { title: 'Messages' },
+  profile:       { title: 'Profile' },
+  bookmarks:     { title: 'Bookmarks' },
+  settings:      { title: 'Settings' },
+};
+
 // Track view-specific subs separately from global ones
 const GlobalSubs = []; // presence channel, etc.
 
@@ -1472,6 +1508,7 @@ function navigateTo(view) {
   showPresence();
   updateSidebarActive();
   updateBottomNavActive(view);
+  updatePageMeta(viewMeta[view] || {});
   const main = $('#main');
   main.style.cssText = ''; // reset any inline styles set by snippets view
   main.innerHTML = '';
@@ -1500,7 +1537,11 @@ function navigateTo(view) {
   // Page enter animation
   main.classList.remove('page-enter');
   requestAnimationFrame(() => {
-    requestAnimationFrame(() => { main.classList.add('page-enter'); });
+    requestAnimationFrame(() => {
+      main.classList.add('page-enter');
+      // Focus management: move focus to main for screen readers
+      main.focus();
+    });
   });
 }
 
@@ -1511,32 +1552,103 @@ function updateBottomNavActive(view) {
   });
 }
 
+/* ── Pull-to-Refresh ────────────────────────────────────────── */
+function initPullToRefresh(container, onRefresh) {
+  // Only on touch devices
+  if (!('ontouchstart' in window)) return;
+
+  let startY = 0, pulling = false, indicator = null;
+  const THRESHOLD = 72;
+
+  container.addEventListener('touchstart', e => {
+    if (container.scrollTop > 0) return;
+    startY = e.touches[0].clientY;
+    pulling = false;
+  }, { passive: true });
+
+  container.addEventListener('touchmove', e => {
+    const dy = e.touches[0].clientY - startY;
+    if (dy < 10) return;
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.className = 'ptr-indicator';
+      indicator.innerHTML = `<i class="fa-solid fa-arrow-rotate-right ptr-icon" aria-hidden="true"></i><span>Pull to refresh</span>`;
+      indicator.setAttribute('aria-live', 'polite');
+      container.insertAdjacentElement('afterbegin', indicator);
+    }
+    const progress = Math.min(dy / THRESHOLD, 1);
+    indicator.style.setProperty('--ptr-progress', progress);
+    indicator.style.height = `${Math.min(dy * 0.4, THRESHOLD * 0.6)}px`;
+    indicator.style.opacity = progress;
+    pulling = progress >= 1;
+    indicator.querySelector('.ptr-icon').style.transform = `rotate(${progress * 360}deg)`;
+    indicator.querySelector('span').textContent = pulling ? 'Release to refresh' : 'Pull to refresh';
+  }, { passive: true });
+
+  container.addEventListener('touchend', async () => {
+    if (!indicator) return;
+    if (pulling) {
+      indicator.querySelector('span').textContent = 'Refreshing…';
+      indicator.querySelector('.ptr-icon').style.animation = 'spin 0.6s linear infinite';
+      await onRefresh();
+    }
+    indicator.style.height = '0';
+    indicator.style.opacity = '0';
+    setTimeout(() => { indicator?.remove(); indicator = null; }, 300);
+    pulling = false;
+  }, { passive: true });
+}
+
+/* ── Swipe Gesture Helper ───────────────────────────────────── */
+function initSwipeNavigation(el, { onSwipeLeft, onSwipeRight } = {}) {
+  if (!('ontouchstart' in window)) return;
+  let sx = 0, sy = 0;
+  el.addEventListener('touchstart', e => {
+    sx = e.touches[0].clientX;
+    sy = e.touches[0].clientY;
+  }, { passive: true });
+  el.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - sx;
+    const dy = e.changedTouches[0].clientY - sy;
+    if (Math.abs(dx) < 40 || Math.abs(dy) > Math.abs(dx) * 0.8) return; // not a horizontal swipe
+    if (dx < 0 && onSwipeLeft)  onSwipeLeft();
+    if (dx > 0 && onSwipeRight) onSwipeRight();
+  }, { passive: true });
+}
+
 /* ── Feed ───────────────────────────────────────────────────── */
 function renderFeed(main) {
   main.innerHTML = `
-    <div class="view-tabs">
-      <div class="view-tab ${State.feedTab === 'for-you' ? 'active' : ''}" data-tab="for-you">For You</div>
-      <div class="view-tab ${State.feedTab === 'following' ? 'active' : ''}" data-tab="following">Following</div>
+    <div class="view-tabs" role="tablist" aria-label="Feed tabs">
+      <div class="view-tab ${State.feedTab === 'for-you' ? 'active' : ''}" data-tab="for-you" role="tab" aria-selected="${State.feedTab === 'for-you'}" tabindex="0">For You</div>
+      <div class="view-tab ${State.feedTab === 'following' ? 'active' : ''}" data-tab="following" role="tab" aria-selected="${State.feedTab === 'following'}" tabindex="-1">Following</div>
     </div>
     <div class="composer" id="composer-area"></div>
-    <div id="feed"><div style="padding:32px;text-align:center;color:var(--text-muted)">Loading posts…</div></div>
+    <div id="feed" role="feed" aria-label="Developer posts" aria-busy="true"><div style="padding:32px;text-align:center;color:var(--text-muted)">Loading posts…</div></div>
   `;
 
   $$('.view-tab[data-tab]', main).forEach(tab => {
     tab.addEventListener('click', () => {
       State.feedTab = tab.dataset.tab;
-      $$('.view-tab', main).forEach(t => t.classList.remove('active'));
+      $$('.view-tab', main).forEach(t => { t.classList.remove('active'); t.setAttribute('aria-selected','false'); t.setAttribute('tabindex','-1'); });
       tab.classList.add('active');
+      tab.setAttribute('aria-selected','true');
+      tab.setAttribute('tabindex','0');
       loadPosts($('#feed'));
+    });
+    tab.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tab.click(); }
     });
   });
 
   buildComposer($('#composer-area'));
   loadPosts($('#feed'));
   subscribeToNewPosts($('#feed'));
+  initPullToRefresh(main, () => loadPosts($('#feed')));
 }
 
 async function loadPosts(container) {
+  container.setAttribute('aria-busy', 'true');
   container.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted)">Loading…</div>`;
 
   let query = sb
@@ -1572,6 +1684,7 @@ async function loadPosts(container) {
   }
 
   container.innerHTML = '';
+  container.setAttribute('aria-busy', 'false');
   if (!posts?.length) {
     container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">No posts yet — be the first! 🚀</div>`;
     return;
@@ -3202,7 +3315,7 @@ function renderSnippets(main) {
       position:fixed;inset:0;z-index:200;background:#000;
       overflow-y:scroll;scroll-snap-type:y mandatory;
       scrollbar-width:none;-ms-overflow-style:none;
-    ">
+    " role="region" aria-label="Snippets feed" aria-roledescription="Video feed — swipe up or down to navigate">
       <style>#snippets-container::-webkit-scrollbar{display:none}</style>
       <div id="snippets-feed" style="width:100%;"></div>
     </div>
@@ -3214,26 +3327,36 @@ function renderSnippets(main) {
       background:linear-gradient(to bottom,rgba(0,0,0,0.6) 0%,transparent 100%);
       pointer-events:none;">
       <div style="pointer-events:auto">
-        <button id="snippets-back-btn" style="background:rgba(0,0,0,0.4);border:none;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px)">
-          <i class="fa-solid fa-arrow-left"></i>
+        <button id="snippets-back-btn" aria-label="Back to feed" style="background:rgba(0,0,0,0.4);border:none;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px)">
+          <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
         </button>
       </div>
-      <div style="font-size:15px;font-weight:700;color:#fff;letter-spacing:0.02em">Snippets</div>
+      <div style="font-size:15px;font-weight:700;color:#fff;letter-spacing:0.02em" aria-hidden="true">Snippets</div>
       <div style="pointer-events:auto;display:flex;gap:8px;align-items:center">
-        <button id="snippets-mute-btn" style="background:rgba(0,0,0,0.4);border:none;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px)">
-          <i class="fa-solid fa-volume-xmark"></i>
+        <button id="snippets-mute-btn" aria-label="Toggle mute" style="background:rgba(0,0,0,0.4);border:none;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px)">
+          <i class="fa-solid fa-volume-xmark" aria-hidden="true"></i>
         </button>
-        <button id="snippets-post-btn" style="background:var(--cyan,#63d9ff);border:none;color:#000;height:32px;padding:0 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px">
-          <i class="fa-solid fa-plus"></i> Post
+        <button id="snippets-post-btn" aria-label="Post a snippet" style="background:var(--cyan,#63d9ff);border:none;color:#000;height:32px;padding:0 14px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px">
+          <i class="fa-solid fa-plus" aria-hidden="true"></i> Post
         </button>
       </div>
+    </div>
+
+    <!-- Swipe hint (fades out after first interaction) -->
+    <div id="snippets-swipe-hint" aria-hidden="true" style="
+      position:fixed;bottom:100px;left:50%;transform:translateX(-50%);
+      z-index:211;display:flex;flex-direction:column;align-items:center;gap:6px;
+      color:rgba(255,255,255,0.7);font-size:12px;font-weight:600;
+      pointer-events:none;animation:swipeHintFade 3s 1.5s forwards;
+    ">
+      <i class="fa-solid fa-angles-up" style="font-size:20px;animation:bounceUp 1s ease-in-out infinite alternate"></i>
+      Swipe up for next
     </div>
   `;
 
   // Back button exits snippets view
   document.getElementById('snippets-back-btn').addEventListener('click', () => {
     main.style.cssText = '';
-    // Pause all videos before leaving
     document.querySelectorAll('.snip-video').forEach(v => v.pause());
     navigateTo('feed');
   });
@@ -3242,15 +3365,33 @@ function renderSnippets(main) {
   const muteBtn = document.getElementById('snippets-mute-btn');
   muteBtn.addEventListener('click', () => {
     _snippetsMuted = !_snippetsMuted;
+    muteBtn.setAttribute('aria-label', _snippetsMuted ? 'Unmute' : 'Mute');
     muteBtn.innerHTML = _snippetsMuted
-      ? '<i class="fa-solid fa-volume-xmark"></i>'
-      : '<i class="fa-solid fa-volume-high"></i>';
+      ? '<i class="fa-solid fa-volume-xmark" aria-hidden="true"></i>'
+      : '<i class="fa-solid fa-volume-high" aria-hidden="true"></i>';
     document.querySelectorAll('.snip-video').forEach(v => { v.muted = _snippetsMuted; });
   });
 
   document.getElementById('snippets-post-btn').addEventListener('click', openSnippetUploadModal);
 
   loadSnippets(document.getElementById('snippets-feed'));
+
+  // Keyboard navigation (arrow keys / j/k)
+  const snippetsContainer = document.getElementById('snippets-container');
+  const onKeydown = e => {
+    if (!document.getElementById('snippets-container')) { document.removeEventListener('keydown', onKeydown); return; }
+    const h = window.innerHeight;
+    if (e.key === 'ArrowDown' || e.key === 'j') snippetsContainer.scrollBy({ top: h, behavior: 'smooth' });
+    if (e.key === 'ArrowUp'   || e.key === 'k') snippetsContainer.scrollBy({ top: -h, behavior: 'smooth' });
+    if (e.key === 'ArrowLeft' || e.key === 'Escape') { main.style.cssText = ''; document.querySelectorAll('.snip-video').forEach(v => v.pause()); navigateTo('feed'); }
+  };
+  document.addEventListener('keydown', onKeydown);
+
+  // Hide swipe hint on first scroll
+  snippetsContainer.addEventListener('scroll', () => {
+    const hint = document.getElementById('snippets-swipe-hint');
+    if (hint) hint.style.display = 'none';
+  }, { once: true });
 }
 
 async function loadSnippets(container) {

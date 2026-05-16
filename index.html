@@ -3,16 +3,49 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Devit — Code. Connect. Ship. The social platform built for developers.">
+  <meta name="description" content="Devit — Code. Connect. Ship. The social platform built for developers. Share code snippets, join communities, and ship faster together.">
   <meta name="theme-color" content="#050508">
   <meta name="robots" content="index, follow">
+  <meta name="keywords" content="developer social network, code sharing, programming community, snippets, developer platform">
+  <meta name="author" content="Devit">
+  <link rel="canonical" href="https://suprosmith-coder.github.io/csc/">
+
+  <!-- Open Graph -->
   <meta property="og:title" content="Devit — Code. Connect. Ship.">
-  <meta property="og:description" content="The social platform built by developers, for developers.">
+  <meta property="og:description" content="The social platform built by developers, for developers. Share code snippets, join communities, and ship faster together.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://suprosmith-coder.github.io/csc/">
+  <meta property="og:image" content="https://suprosmith-coder.github.io/csc/devit.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Devit — The developer social platform">
+  <meta property="og:site_name" content="Devit">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Devit — Code. Connect. Ship.">
   <meta name="twitter:description" content="The social platform built by developers, for developers.">
+  <meta name="twitter:image" content="https://suprosmith-coder.github.io/csc/devit.png">
+  <meta name="twitter:image:alt" content="Devit — The developer social platform">
+
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "Devit",
+    "description": "The social platform built by developers, for developers. Share code snippets, join communities, and ship faster together.",
+    "url": "https://suprosmith-coder.github.io/csc/",
+    "applicationCategory": "SocialNetworkingApplication",
+    "operatingSystem": "Web",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    }
+  }
+  </script>
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta http-equiv="X-Frame-Options" content="SAMEORIGIN">
   <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
@@ -24,6 +57,8 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
 <body>
+
+  <a href="#main" class="skip-link">Skip to main content</a>
 
   <noscript>
     <div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui;text-align:center;padding:20px">
@@ -166,12 +201,12 @@
   </div>
 
   <!-- APP SHELL -->
-  <div id="app">
-    <div id="topbar"></div>
+  <div id="app" aria-hidden="true">
+    <div id="topbar" role="banner"></div>
     <div class="app-body">
-      <aside id="sidebar"></aside>
-      <main id="main"></main>
-      <aside id="rightbar"></aside>
+      <aside id="sidebar" role="navigation" aria-label="Main navigation"></aside>
+      <main id="main" role="main" aria-live="polite" aria-atomic="false" tabindex="-1"></main>
+      <aside id="rightbar" role="complementary" aria-label="Sidebar widgets"></aside>
     </div>
   </div>
 
@@ -213,17 +248,17 @@
   </button>
 
   <!-- MODAL -->
-  <div class="modal-overlay" id="modal-overlay">
+  <div class="modal-overlay" id="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title-text">
     <div class="modal">
       <div class="modal-header">
         <span class="modal-title" id="modal-title-text">New Post</span>
-        <button class="modal-close" id="modal-close-btn"><i class="fa-solid fa-xmark"></i></button>
+        <button class="modal-close" id="modal-close-btn" aria-label="Close dialog"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
       </div>
       <div class="modal-body" id="modal-body"></div>
     </div>
   </div>
 
-  <div id="toast-container"></div>
+  <div id="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 
   <!-- PROFILE QUICK VIEW OVERLAY -->
   <div id="profile-quick-overlay" style="display:none;position:fixed;inset:0;z-index:600;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);align-items:center;justify-content:center;">
