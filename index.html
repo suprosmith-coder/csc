@@ -51,6 +51,7 @@
   <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
   <title>Devit — Code. Connect. Ship.</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style-overrides.css">
   <link rel="icon" href="devit.png" type="image/png">
   <!-- Font Awesome 6 -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LQ==" crossorigin="anonymous" referrerpolicy="no-referrer">
@@ -86,13 +87,13 @@
         <img src="devit.png" alt="Devit" class="auth-panel-logo">
         <span class="auth-panel-name">Devit</span>
       </div>
-      <h2 class="auth-panel-headline">Where developers<br>build in public.</h2>
-      <p class="auth-panel-desc">Share code snippets, join communities, and ship faster together.</p>
+      <h2 class="auth-panel-headline">Your dev workspace.<br>Open source.</h2>
+      <p class="auth-panel-desc">A place to log what you're building, review what others ship, and find people worth collaborating with.</p>
       <ul class="auth-features">
-        <li><i class="fa-solid fa-code-branch"></i> Real-time developer feed</li>
-        <li><i class="fa-solid fa-users"></i> Topic-based communities</li>
-        <li><i class="fa-solid fa-bolt"></i> Instant messaging</li>
-        <li><i class="fa-solid fa-shield-halved"></i> Built on Supabase RLS</li>
+        <li><i class="fa-solid fa-terminal"></i> Activity log — not a feed</li>
+        <li><i class="fa-solid fa-code-pull-request"></i> Review-style post threads</li>
+        <li><i class="fa-solid fa-bolt"></i> Real-time, zero-noise DMs</li>
+        <li><i class="fa-solid fa-lock"></i> Row-level security, always</li>
       </ul>
     </div>
 
@@ -216,17 +217,17 @@
   <!-- MOBILE BOTTOM NAV -->
   <nav id="bottom-nav" aria-label="Main navigation">
     <div id="bottom-nav-inner">
-      <button class="bnav-btn active" data-nav="feed" aria-label="Home">
-        <i class="fa-solid fa-house"></i>
-        <span class="bnav-label">Home</span>
+      <button class="bnav-btn active" data-nav="feed" aria-label="Feed">
+        <i class="fa-solid fa-terminal"></i>
+        <span class="bnav-label">Feed</span>
         <span class="bnav-badge" id="bnav-badge-feed"></span>
       </button>
       <button class="bnav-btn" data-nav="snippets" aria-label="Snippets">
-        <i class="fa-solid fa-film"></i>
+        <i class="fa-solid fa-code"></i>
         <span class="bnav-label">Snippets</span>
       </button>
       <button class="bnav-btn" data-nav="links" aria-label="Links">
-        <i class="fa-solid fa-link"></i>
+        <i class="fa-solid fa-code-pull-request"></i>
         <span class="bnav-label">Links</span>
         <span class="bnav-badge" id="bnav-badge-links"></span>
       </button>
@@ -236,7 +237,7 @@
         <span class="bnav-badge" id="bnav-badge-notifs"></span>
       </button>
       <button class="bnav-btn" data-nav="profile" aria-label="Profile">
-        <i class="fa-solid fa-user"></i>
+        <i class="fa-solid fa-circle-user"></i>
         <span class="bnav-label">Me</span>
       </button>
     </div>

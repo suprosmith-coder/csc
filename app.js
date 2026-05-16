@@ -1284,18 +1284,18 @@ function closeSearch() {
 function buildSidebar() {
   const sb_el = $('#sidebar');
   const links = [
-    { id: 'feed',          icon: '<i class="fa-solid fa-house"></i>', label: 'Home' },
-    { id: 'explore',       icon: '<i class="fa-solid fa-compass"></i>', label: 'Explore' },
-    { id: 'snippets',      icon: '<i class="fa-solid fa-film"></i>', label: 'Snippets' },
-    { id: 'links',         icon: '<i class="fa-solid fa-link"></i>', label: 'Links', badge: 0 },
-    { id: 'notifications', icon: '<i class="fa-solid fa-bell"></i>', label: 'Notifications', badge: State.unreadNotifs },
-    { id: 'messages',      icon: '<i class="fa-solid fa-message"></i>', label: 'Messages', badge: State.unreadMessages },
-    { id: 'profile',       icon: '<i class="fa-solid fa-user"></i>', label: 'Profile' },
-    { id: 'bookmarks',     icon: '<i class="fa-solid fa-bookmark"></i>', label: 'Bookmarks' },
-    { id: 'settings',      icon: '<i class="fa-solid fa-gear"></i>', label: 'Settings' },
+    { id: 'feed',          icon: '<i class="fa-solid fa-terminal"></i>', label: 'Activity' },
+    { id: 'explore',       icon: '<i class="fa-solid fa-magnifying-glass"></i>', label: 'Discover' },
+    { id: 'snippets',      icon: '<i class="fa-solid fa-code"></i>', label: 'Snippets' },
+    { id: 'links',         icon: '<i class="fa-solid fa-code-pull-request"></i>', label: 'Links', badge: 0 },
+    { id: 'notifications', icon: '<i class="fa-solid fa-bell"></i>', label: 'Alerts', badge: State.unreadNotifs },
+    { id: 'messages',      icon: '<i class="fa-solid fa-message"></i>', label: 'DMs', badge: State.unreadMessages },
+    { id: 'profile',       icon: '<i class="fa-solid fa-circle-user"></i>', label: 'Profile' },
+    { id: 'bookmarks',     icon: '<i class="fa-solid fa-bookmark"></i>', label: 'Saved' },
+    { id: 'settings',      icon: '<i class="fa-solid fa-sliders"></i>', label: 'Settings' },
   ];
 
-  let html = `<div class="sidebar-section-label">Navigate</div>`;
+  let html = `<div class="sidebar-section-label">Workspace</div>`;
   links.forEach(l => {
     html += `<div class="sidebar-link${l.id === State.currentView ? ' active' : ''}" data-nav="${l.id}">
       <span class="icon">${l.icon}</span>
@@ -1306,8 +1306,8 @@ function buildSidebar() {
 
   html += `<div class="sidebar-divider"></div>
   <div class="sidebar-communities-header">
-    <span>Communities</span>
-    <button id="create-community-btn" title="Create community"><i class="fa-solid fa-plus"></i></button>
+    <span>Channels</span>
+    <button id="create-community-btn" title="Create channel"><i class="fa-solid fa-plus"></i></button>
   </div>
   <div id="sidebar-communities">
     <div style="padding:8px 16px;font-size:12px;color:var(--text-muted)">Loading…</div>
@@ -1626,8 +1626,8 @@ function initSwipeNavigation(el, { onSwipeLeft, onSwipeRight } = {}) {
 function renderFeed(main) {
   main.innerHTML = `
     <div class="view-tabs" role="tablist" aria-label="Feed tabs">
-      <div class="view-tab ${State.feedTab === 'for-you' ? 'active' : ''}" data-tab="for-you" role="tab" aria-selected="${State.feedTab === 'for-you'}" tabindex="0">For You</div>
-      <div class="view-tab ${State.feedTab === 'following' ? 'active' : ''}" data-tab="following" role="tab" aria-selected="${State.feedTab === 'following'}" tabindex="-1">Following</div>
+      <div class="view-tab ${State.feedTab === 'for-you' ? 'active' : ''}" data-tab="for-you" role="tab" aria-selected="${State.feedTab === 'for-you'}" tabindex="0">main</div>
+      <div class="view-tab ${State.feedTab === 'following' ? 'active' : ''}" data-tab="following" role="tab" aria-selected="${State.feedTab === 'following'}" tabindex="-1">starred</div>
     </div>
     <div class="composer" id="composer-area"></div>
     <div id="feed" role="feed" aria-label="Developer posts" aria-busy="true"><div style="padding:32px;text-align:center;color:var(--text-muted)">Loading posts…</div></div>
@@ -1760,7 +1760,7 @@ function buildComposer(container) {
     <div class="composer-inner">
       <div class="composer-row">
         <div class="composer-avatar">${avatarHtml(profile, 38)}</div>
-        <textarea class="composer-textarea" id="post-textarea" placeholder="What are you building today?" rows="2"></textarea>
+        <textarea class="composer-textarea" id="post-textarea" placeholder="// what are you building today?" rows="2"></textarea>
       </div>
       <pre class="composer-code-block" id="composer-code" spellcheck="false" contenteditable="false"></pre>
       <div id="composer-attach-preview" style="display:none;padding:0 0 8px 0"></div>
