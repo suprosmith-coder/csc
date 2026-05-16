@@ -4088,36 +4088,45 @@ function openProfileEditModal(profile) {
     let avatarUrl = profile.avatar_url;
     let bannerUrl = profile.banner_url;
 
-    // Upload new avatar — fixed path + upsert so old files don't accumulate
+    // Helper: delete-then-upload so upsert quirks don't block us
+    async function storageUpload(bucket, path, file) {
+      // Remove existing file first (ignore error if it doesn't exist)
+      await sb.storage.from(bucket).remove([path]);
+      const { data, error } = await sb.storage
+        .from(bucket)
+        .upload(path, file, { contentType: file.type, cacheControl: '3600' });
+      if (error) {
+        console.error(`[Devit] storage upload failed bucket=${bucket} path=${path}`, JSON.stringify(error));
+      }
+      return error;
+    }
+
+    // Upload new avatar
     if (newAvatarFile) {
       const ext = (newAvatarFile.name.split('.').pop() || 'jpg').toLowerCase();
+      // Keep path flat: USER_ID/avatar.ext — matches RLS policy foldername[1] = auth.uid()
       const path = `${State.user.id}/avatar.${ext}`;
-      const { error: avErr } = await sb.storage
-        .from('avatars')
-        .upload(path, newAvatarFile, { contentType: newAvatarFile.type, upsert: true });
+      const avErr = await storageUpload('avatars', path, newAvatarFile);
       if (avErr) {
         btn.disabled = false; btn.textContent = 'Save Changes';
+        statusEl.style.display = 'block';
         statusEl.style.color = 'var(--rose)';
-        statusEl.textContent = 'Avatar upload failed: ' + avErr.message;
-        console.error('[Devit] avatar upload error', avErr);
+        statusEl.textContent = 'Avatar upload failed: ' + (avErr.message || avErr.error || JSON.stringify(avErr));
         return;
       }
-      // Cache-bust so browser doesn't show the stale image
       avatarUrl = sb.storage.from('avatars').getPublicUrl(path).data.publicUrl + '?t=' + Date.now();
     }
 
-    // Upload new banner — stored in the same avatars bucket under banners/ prefix
+    // Upload new banner — path: USER_ID/banner.ext (still under user folder, RLS matches)
     if (newBannerFile) {
       const ext = (newBannerFile.name.split('.').pop() || 'jpg').toLowerCase();
-      const path = `banners/${State.user.id}/banner.${ext}`;
-      const { error: bnErr } = await sb.storage
-        .from('avatars')
-        .upload(path, newBannerFile, { contentType: newBannerFile.type, upsert: true });
+      const path = `${State.user.id}/banner.${ext}`;
+      const bnErr = await storageUpload('avatars', path, newBannerFile);
       if (bnErr) {
         btn.disabled = false; btn.textContent = 'Save Changes';
+        statusEl.style.display = 'block';
         statusEl.style.color = 'var(--rose)';
-        statusEl.textContent = 'Banner upload failed: ' + bnErr.message;
-        console.error('[Devit] banner upload error', bnErr);
+        statusEl.textContent = 'Banner upload failed: ' + (bnErr.message || bnErr.error || JSON.stringify(bnErr));
         return;
       }
       bannerUrl = sb.storage.from('avatars').getPublicUrl(path).data.publicUrl + '?t=' + Date.now();
