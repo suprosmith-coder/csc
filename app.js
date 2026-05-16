@@ -4088,20 +4088,39 @@ function openProfileEditModal(profile) {
     let avatarUrl = profile.avatar_url;
     let bannerUrl = profile.banner_url;
 
-    // Upload new avatar
+    // Upload new avatar — fixed path + upsert so old files don't accumulate
     if (newAvatarFile) {
-      const ext = newAvatarFile.name.split('.').pop();
-      const path = `avatars/${State.user.id}/avatar_${Date.now()}.${ext}`;
-      const { error: avErr } = await sb.storage.from('avatars').upload(path, newAvatarFile, { contentType: newAvatarFile.type, upsert: true });
-      if (!avErr) avatarUrl = sb.storage.from('avatars').getPublicUrl(path).data.publicUrl;
+      const ext = (newAvatarFile.name.split('.').pop() || 'jpg').toLowerCase();
+      const path = `${State.user.id}/avatar.${ext}`;
+      const { error: avErr } = await sb.storage
+        .from('avatars')
+        .upload(path, newAvatarFile, { contentType: newAvatarFile.type, upsert: true });
+      if (avErr) {
+        btn.disabled = false; btn.textContent = 'Save Changes';
+        statusEl.style.color = 'var(--rose)';
+        statusEl.textContent = 'Avatar upload failed: ' + avErr.message;
+        console.error('[Devit] avatar upload error', avErr);
+        return;
+      }
+      // Cache-bust so browser doesn't show the stale image
+      avatarUrl = sb.storage.from('avatars').getPublicUrl(path).data.publicUrl + '?t=' + Date.now();
     }
 
-    // Upload new banner
+    // Upload new banner — stored in the same avatars bucket under banners/ prefix
     if (newBannerFile) {
-      const ext = newBannerFile.name.split('.').pop();
-      const path = `banners/${State.user.id}/banner_${Date.now()}.${ext}`;
-      const { error: bnErr } = await sb.storage.from('banners').upload(path, newBannerFile, { contentType: newBannerFile.type, upsert: true });
-      if (!bnErr) bannerUrl = sb.storage.from('banners').getPublicUrl(path).data.publicUrl;
+      const ext = (newBannerFile.name.split('.').pop() || 'jpg').toLowerCase();
+      const path = `banners/${State.user.id}/banner.${ext}`;
+      const { error: bnErr } = await sb.storage
+        .from('avatars')
+        .upload(path, newBannerFile, { contentType: newBannerFile.type, upsert: true });
+      if (bnErr) {
+        btn.disabled = false; btn.textContent = 'Save Changes';
+        statusEl.style.color = 'var(--rose)';
+        statusEl.textContent = 'Banner upload failed: ' + bnErr.message;
+        console.error('[Devit] banner upload error', bnErr);
+        return;
+      }
+      bannerUrl = sb.storage.from('avatars').getPublicUrl(path).data.publicUrl + '?t=' + Date.now();
     }
 
     const tech_stack = document.getElementById('edit-tech').value.split(',').map(t => t.trim()).filter(Boolean);
