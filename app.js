@@ -1002,22 +1002,24 @@ async function ensureProfile(authUser) {
 
 /* ── Build App ──────────────────────────────────────────────── */
 async function buildApp() {
-  await bootstrapSchema();
-  // Remove aria-hidden now that app is active
-  const appEl = document.getElementById('app');
-  if (appEl) appEl.removeAttribute('aria-hidden');
+  // Build UI immediately — don't let DB schema check block nav from rendering
   buildTopbar();
   buildSidebar();
   buildRightbar();
   initBottomNav();
   navigateTo('feed');
+
+  // Remove aria-hidden now that app is active
+  const appEl = document.getElementById('app');
+  if (appEl) appEl.removeAttribute('aria-hidden');
+
+  // Non-blocking background tasks
+  bootstrapSchema(); // fire and forget — only logs warnings
   initPresenceRealtime();
   initGlobalNotifSub();
   loadUnreadCounts();
   registerServiceWorker();
-  // Handle invite code from URL (if user arrived via an invite link)
   handleInviteOnLoad();
-  // Delay push prompt slightly so it doesn't interrupt first load
   setTimeout(() => registerPushNotifications(), 3000);
 }
 
@@ -3397,7 +3399,7 @@ async function renderProfile(main, userId = null) {
     </div>
     <div class="profile-tabs">
       <div class="profile-tab-list">
-        ${['Posts','Replies'].map((t,i) => `<div class="profile-tab ${i===0?'active':''}" data-ptab="${t}">${t}</div>`).join('')}
+        ${['Posts','Repos'].map((t,i) => `<div class="profile-tab ${i===0?'active':''}" data-ptab="${t}">${t}</div>`).join('')}
       </div>
     </div>
     <div id="profile-content"></div>
@@ -3474,6 +3476,7 @@ async function renderProfile(main, userId = null) {
       tab.classList.add('active');
       const content = $('#profile-content');
       if (tab.dataset.ptab === 'Posts') loadProfilePosts(content, targetId);
+      else if (tab.dataset.ptab === 'Repos') loadProfileRepos(content, profile);
       else content.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">Coming soon 🔜</div>`;
     });
   });
@@ -3498,6 +3501,91 @@ async function loadProfilePosts(container, userId) {
 
   container.innerHTML = '';
   posts.forEach(p => container.appendChild(buildPostCard(p, p.profiles, likedIds.has(p.id), false)));
+}
+
+/* ── Profile Repos ──────────────────────────────────────────── */
+async function loadProfileRepos(container, profile) {
+  if (!container) return;
+
+  // Use cached repos from tech_stack if no GitHub token available
+  const username = profile?.username;
+  const isGitHub = profile?.is_github;
+
+  container.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted)">Loading repos…</div>`;
+
+  // Try fetching from GitHub public API (works without a token for public repos)
+  let repos = [];
+  if (isGitHub && username) {
+    try {
+      const res = await fetch(`https://api.github.com/users/${encodeURIComponent(username)}/repos?sort=updated&per_page=12&type=owner`);
+      if (res.ok) {
+        const data = await res.json();
+        repos = data.sort((a, b) => (b.stargazers_count - a.stargazers_count));
+      }
+    } catch (e) { /* fall through to tech_stack fallback */ }
+  }
+
+  // Fallback: show tech_stack chips as "pinned repos" if no GH data
+  if (!repos.length) {
+    const techStack = profile?.tech_stack || [];
+    if (!techStack.length) {
+      container.innerHTML = `
+        <div style="padding:48px;text-align:center;color:var(--text-muted)">
+          <div style="font-size:36px;margin-bottom:12px">📦</div>
+          <div style="font-size:14px;font-weight:600">No repos linked</div>
+          <div style="font-size:12px;margin-top:6px">${isGitHub ? 'No public repos found on GitHub.' : 'Connect with GitHub to show your repositories here.'}</div>
+        </div>`;
+      return;
+    }
+    // Render tech_stack as repo chips
+    container.innerHTML = `
+      <div style="padding:16px">
+        <div style="font-size:11px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:12px">
+          <i class="fa-solid fa-code-branch" style="color:var(--cyan);margin-right:6px"></i>Tech Stack
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          ${techStack.map(t => `
+            <span style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;background:rgba(99,217,255,0.07);border:1px solid rgba(99,217,255,0.15);font-size:13px;font-weight:600;color:var(--text-secondary)">
+              <i class="fa-solid fa-code" style="font-size:11px;color:var(--cyan)"></i>${escapeHtml(t)}
+            </span>`).join('')}
+        </div>
+      </div>`;
+    return;
+  }
+
+  // Render full GitHub repo cards
+  container.innerHTML = `
+    <div style="padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">
+      ${repos.map(r => `
+        <a href="${escapeHtml(r.html_url)}" target="_blank" rel="noopener noreferrer" style="text-decoration:none">
+          <div style="
+            background:var(--bg-surface);border:1px solid var(--border);border-radius:14px;
+            padding:14px 16px;transition:border-color 0.2s,transform 0.2s;cursor:pointer;
+            display:flex;flex-direction:column;gap:8px;min-height:110px;
+          " onmouseenter="this.style.borderColor='rgba(99,217,255,0.35)';this.style.transform='translateY(-2px)'"
+             onmouseleave="this.style.borderColor='var(--border)';this.style.transform=''">
+            <div style="display:flex;align-items:center;gap:8px">
+              <i class="fa-solid fa-code-branch" style="color:var(--cyan);font-size:13px"></i>
+              <span style="font-size:14px;font-weight:700;color:var(--cyan);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.name)}</span>
+              ${r.private ? '<span style="font-size:9px;padding:2px 6px;background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.2);border-radius:4px;color:var(--amber);font-weight:700">PRIVATE</span>' : ''}
+            </div>
+            ${r.description ? `<div style="font-size:12px;color:var(--text-secondary);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${escapeHtml(r.description)}</div>` : ''}
+            <div style="display:flex;align-items:center;gap:12px;margin-top:auto;font-size:11px;color:var(--text-muted)">
+              ${r.language ? `<span style="display:flex;align-items:center;gap:4px"><span style="width:8px;height:8px;border-radius:50%;background:var(--cyan);display:inline-block"></span>${escapeHtml(r.language)}</span>` : ''}
+              <span><i class="fa-solid fa-star" style="color:var(--amber);font-size:10px"></i> ${r.stargazers_count || 0}</span>
+              <span><i class="fa-solid fa-code-fork" style="font-size:10px"></i> ${r.forks_count || 0}</span>
+              <span style="margin-left:auto">${timeAgo(r.updated_at)}</span>
+            </div>
+          </div>
+        </a>
+      `).join('')}
+    </div>
+    <div style="padding:8px 16px 16px;text-align:center">
+      <a href="https://github.com/${escapeHtml(username)}" target="_blank" rel="noopener noreferrer"
+         style="font-size:12px;color:var(--cyan);text-decoration:none;display:inline-flex;align-items:center;gap:6px">
+        <i class="fa-brands fa-github"></i> View all on GitHub
+      </a>
+    </div>`;
 }
 
 /* ── Bookmarks ──────────────────────────────────────────────── */
