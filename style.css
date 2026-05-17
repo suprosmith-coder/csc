@@ -2978,3 +2978,128 @@ textarea.composer-textarea,
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   DEVIT — Micro-features
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── Like particle burst ─────────────────────────────────────── */
+@keyframes likeParticle {
+  0%   { transform: translate(-50%,-50%) scale(1); opacity: 1; }
+  100% { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(0); opacity: 0; }
+}
+
+/* ── Typing indicator bubble (DMs) ───────────────────────────── */
+.dm-typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px 10px;
+  animation: fadeIn 0.2s ease;
+}
+.typing-bubble {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-elevated);
+  padding: 8px 12px;
+  border-radius: 16px 16px 16px 4px;
+}
+.typing-bubble span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: typingDot 1.2s ease-in-out infinite;
+}
+.typing-bubble span:nth-child(2) { animation-delay: 0.18s; }
+.typing-bubble span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes typingDot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%            { transform: translateY(-5px); opacity: 1; }
+}
+
+/* ── Auto-grow textarea ──────────────────────────────────────── */
+.composer-textarea {
+  resize: none;
+  overflow: hidden;
+  min-height: 44px;
+  max-height: 200px;
+  transition: height 0.1s ease;
+}
+
+/* ── Char ring tooltip ───────────────────────────────────────── */
+#char-ring { cursor: default; flex-shrink: 0; }
+#char-ring svg circle { transition: stroke-dasharray 0.15s, stroke 0.2s; }
+
+/* ── Post time tooltip ───────────────────────────────────────── */
+.post-time {
+  cursor: default;
+  position: relative;
+}
+.post-time:hover::after {
+  content: attr(title);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  white-space: nowrap;
+  background: var(--bg-float);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-primary);
+  padding: 4px 8px;
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+/* ── Notification badge pulse ────────────────────────────────── */
+.badge-count,
+.bnav-badge {
+  animation: badgePulse 2.2s ease-in-out infinite;
+}
+@keyframes badgePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(251,113,133,0.5); }
+  50%       { box-shadow: 0 0 0 4px rgba(251,113,133,0); }
+}
+
+/* ── Optimistic comment fadeIn ───────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 0.6; transform: translateY(0); }
+}
+
+/* ── Post card left-border active fill ───────────────────────── */
+.post-card {
+  position: relative;
+  overflow: visible;
+}
+.post-card::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: linear-gradient(to bottom, var(--cyan), var(--violet));
+  border-radius: 2px 0 0 2px;
+  transform: scaleY(0);
+  transform-origin: top;
+  transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  opacity: 0;
+}
+.post-card:hover::before {
+  transform: scaleY(1);
+  opacity: 1;
+}
+
+/* ── Composer toolbar icon active states ─────────────────────── */
+.composer-tool {
+  transition: color var(--transition), transform var(--transition);
+}
+.composer-tool:hover {
+  transform: scale(1.15);
+  color: var(--cyan);
+}
+.composer-tool:active {
+  transform: scale(0.9);
+}

@@ -54,6 +54,67 @@ const timeAgo = ts => {
   if (s < 86400) return Math.floor(s / 3600) + 'h ago';
   return Math.floor(s / 86400) + 'd ago';
 };
+/* ── Micro-feature: Like particles ──────────────────────────── */
+function spawnLikeParticles(btn) {
+  const rect = btn.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const colors = ['#fb7185','#f97316','#fbbf24','#f472b6','#ff6b6b'];
+  for (let i = 0; i < 7; i++) {
+    const dot = document.createElement('div');
+    const angle = (Math.PI * 2 / 7) * i - Math.PI / 2;
+    const dist = 28 + Math.random() * 18;
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist;
+    dot.style.cssText = `
+      position:fixed;pointer-events:none;z-index:9999;
+      width:5px;height:5px;border-radius:50%;
+      background:${colors[i % colors.length]};
+      left:${cx}px;top:${cy}px;
+      transform:translate(-50%,-50%);
+      animation:likeParticle 0.55s ease-out forwards;
+      --dx:${dx}px;--dy:${dy}px;
+    `;
+    document.body.appendChild(dot);
+    setTimeout(() => dot.remove(), 600);
+  }
+}
+
+/* ── Micro-feature: Full datetime tooltip on timeAgo ─────────── */
+function fmtFullDate(ts) {
+  return new Date(ts).toLocaleString(undefined, {
+    weekday: 'short', year: 'numeric', month: 'short',
+    day: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+}
+
+/* ── Micro-feature: Auto-grow textarea ───────────────────────── */
+function autoGrow(textarea) {
+  textarea.style.height = 'auto';
+  textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+}
+
+/* ── Micro-feature: Composer char ring ───────────────────────── */
+function updateCharRing(left, total = 280) {
+  const ring = document.getElementById('char-ring');
+  if (!ring) return;
+  const pct = Math.max(0, left) / total;
+  const r = 10, c = 2 * Math.PI * r;
+  const dash = pct * c;
+  const color = left < 0 ? '#fb7185' : left < 20 ? '#fb7185' : left < 60 ? '#fbbf24' : '#63d9ff';
+  ring.innerHTML = `
+    <svg width="26" height="26" viewBox="0 0 26 26" style="transform:rotate(-90deg)">
+      <circle cx="13" cy="13" r="${r}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2.5"/>
+      <circle cx="13" cy="13" r="${r}" fill="none" stroke="${color}" stroke-width="2.5"
+        stroke-dasharray="${dash} ${c}" stroke-linecap="round"
+        style="transition:stroke-dasharray 0.15s,stroke 0.2s"/>
+    </svg>
+    ${left < 30 ? `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:${color};font-family:var(--font-mono)">${left}</span>` : ''}
+  `;
+  ring.style.position = 'relative';
+  ring.style.display = 'inline-flex';
+}
+
 const avatarColor = str => {
   let h = 0;
   for (let i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
@@ -1296,7 +1357,6 @@ function closeSearch() {
 /* ── Sidebar ────────────────────────────────────────────────── */
 function buildSidebar() {
   const sb_el = $('#sidebar');
-
   const primaryLinks = [
     { id: 'feed',          icon: '<i class="fa-solid fa-house"></i>',        label: 'Workspace' },
     { id: 'explore',       icon: '<i class="fa-solid fa-compass"></i>',       label: 'Discover' },
@@ -1305,13 +1365,11 @@ function buildSidebar() {
     { id: 'notifications', icon: '<i class="fa-solid fa-bell"></i>',          label: 'Inbox', badge: State.unreadNotifs },
     { id: 'messages',      icon: '<i class="fa-solid fa-message"></i>',       label: 'DMs', badge: State.unreadMessages },
   ];
-
   const secondaryLinks = [
     { id: 'profile',       icon: '<i class="fa-solid fa-user"></i>',          label: 'My Work' },
     { id: 'bookmarks',     icon: '<i class="fa-solid fa-bookmark"></i>',      label: 'Saved' },
     { id: 'settings',      icon: '<i class="fa-solid fa-gear"></i>',          label: 'Settings' },
   ];
-
   const renderLinks = (arr) => arr.map(l => `
     <div class="sidebar-link${l.id === State.currentView ? ' active' : ''}" data-nav="${l.id}">
       <span class="icon">${l.icon}</span>
@@ -1327,7 +1385,6 @@ function buildSidebar() {
     ${renderLinks(secondaryLinks)}
     <div class="sidebar-divider"></div>
   `;
-
   html += `
   <div class="sidebar-communities-header">
     <span>Channels</span>
@@ -1801,7 +1858,8 @@ function buildComposer(container) {
         <input type="file" id="composer-img-input" accept="image/*" style="display:none">
         <input type="file" id="composer-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.js,.ts,.py,.html,.css,.json,.zip,.rar,.7z,.mp3,.wav,.ogg,.mp4,.mov,.webm" style="display:none">
         <div class="composer-actions">
-          <span class="char-count" id="char-count">280</span>
+          <div id="char-ring" style="width:26px;height:26px;flex-shrink:0"></div>
+          <span class="char-count" id="char-count" style="display:none">280</span>
           <button class="post-btn" id="post-submit-btn" disabled>Post</button>
         </div>
       </div>
@@ -1825,10 +1883,15 @@ function buildComposer(container) {
 
   const canPost = () => textarea.value.trim().length > 0 || selectedImageFile || selectedAttachFile;
 
+  // Init ring
+  updateCharRing(280);
+
   textarea.addEventListener('input', () => {
     const left = 280 - textarea.value.length;
     charCount.textContent = left;
     charCount.style.color = left < 20 ? 'var(--rose)' : left < 60 ? 'var(--amber)' : 'var(--text-muted)';
+    updateCharRing(left);
+    autoGrow(textarea);
     submitBtn.disabled = !canPost();
   });
 
@@ -2015,7 +2078,7 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
           ${profile?.is_github ? `<span style="display:inline-flex;align-items:center;gap:3px;background:#24292e;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;line-height:1.4;"><i class="fa-brands fa-github" style="font-size:10px;"></i></span>` : ''}
           <span class="post-author-handle">@${profile?.username || '?'}</span>
         </div>
-        <div class="post-time">${timeAgo(post.created_at)}</div>
+        <div class="post-time" title="${fmtFullDate(post.created_at)}">${timeAgo(post.created_at)}</div>
       </div>
       ${post.author_id === State.user.id
         ? `<button class="post-delete-btn" data-pid="${post.id}" title="Delete post" style="margin-left:auto;color:var(--text-muted);font-size:14px;padding:4px 8px;border-radius:6px;transition:color 0.15s"><i class="fa-solid fa-xmark"></i></button>`
@@ -2053,7 +2116,11 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
     likeBtn.classList.toggle('liked', likedState);
     svg.setAttribute('fill', likedState ? 'currentColor' : 'none');
     countEl.textContent = fmtNum(likedState ? currentCount + 1 : currentCount - 1);
-    if (likedState) { likeBtn.style.transform = 'scale(1.3)'; setTimeout(() => likeBtn.style.transform = '', 200); }
+    if (likedState) {
+      likeBtn.style.transform = 'scale(1.3)';
+      setTimeout(() => likeBtn.style.transform = '', 200);
+      spawnLikeParticles(likeBtn);
+    }
 
     if (likedState) {
       await sb.from('post_likes').insert({ post_id: post.id, user_id: State.user.id });
@@ -2979,8 +3046,49 @@ async function openDM(convoId, otherUserId, container) {
   const sendBtn = document.getElementById('dm-send-btn');
   const dmInputEl = document.getElementById('dm-input');
 
-  if (sendBtn) sendBtn.addEventListener('click', (e) => { e.preventDefault(); sendDM(); });
-  if (dmInputEl) dmInputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDM(); } });
+  // ── Typing indicator ──────────────────────────────────────────
+  let _typingTimer = null;
+  let _typingIndicatorEl = null;
+
+  function showTypingIndicator() {
+    if (_typingIndicatorEl) return;
+    const listEl = document.getElementById('active-dm-messages');
+    if (!listEl) return;
+    _typingIndicatorEl = document.createElement('div');
+    _typingIndicatorEl.className = 'dm-typing-indicator';
+    _typingIndicatorEl.innerHTML = `
+      <div class="msg-avatar" style="background:${color};width:28px;height:28px;font-size:11px;flex-shrink:0">${avatarInitials(other?.display_name || other?.username || '?')}</div>
+      <div class="typing-bubble"><span></span><span></span><span></span></div>
+    `;
+    listEl.appendChild(_typingIndicatorEl);
+    listEl.scrollTop = listEl.scrollHeight;
+  }
+  function hideTypingIndicator() {
+    _typingIndicatorEl?.remove();
+    _typingIndicatorEl = null;
+  }
+
+  // Listen for typing events from the other user
+  realtimeCh.on('broadcast', { event: 'typing' }, ({ payload }) => {
+    if (payload?.sender === State.user.id) return;
+    showTypingIndicator();
+    clearTimeout(_typingTimer);
+    _typingTimer = setTimeout(hideTypingIndicator, 2200);
+  });
+
+  // Broadcast typing when user types
+  let _myTypingTimer = null;
+  if (dmInputEl) {
+    dmInputEl.addEventListener('input', () => {
+      clearTimeout(_myTypingTimer);
+      _myTypingTimer = setTimeout(() => {
+        realtimeCh.send({ type: 'broadcast', event: 'typing', payload: { sender: State.user.id } });
+      }, 120);
+    });
+  }
+
+  if (sendBtn) sendBtn.addEventListener('click', (e) => { e.preventDefault(); hideTypingIndicator(); sendDM(); });
+  if (dmInputEl) dmInputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); hideTypingIndicator(); sendDM(); } });
 
   // Mobile back button
   const backBtn = $('#dm-back-btn', container);
@@ -3866,31 +3974,39 @@ async function openSnippetComments(snippetId, card) {
     const text = input.value.trim();
     if (!text) return;
     if (!State.user) { toast('Sign in to comment', 'circle-exclamation'); return; }
-    sendBtn.disabled = true;
-    sendBtn.textContent = '…';
     input.value = '';
+    sendBtn.disabled = true;
+
+    // ── Optimistic: show comment immediately ──────────────────
+    const commentList = panel.querySelector('#snip-comments-list');
+    const optimistic = document.createElement('div');
+    optimistic.style.cssText = 'display:flex;gap:10px;padding:10px 16px;align-items:flex-start;opacity:0.6;animation:fadeIn 0.2s ease';
+    optimistic.innerHTML = `
+      ${avatarHtml(State.profile, 30)}
+      <div>
+        <div style="font-size:13px;font-weight:600">${escapeHtml(State.profile?.display_name || State.profile?.username || 'You')}</div>
+        <div style="font-size:13px;margin-top:2px;color:var(--text-primary)">${escapeHtml(text)}</div>
+      </div>`;
+    commentList?.appendChild(optimistic);
+    commentList && (commentList.scrollTop = commentList.scrollHeight);
+
     const { error } = await sb.from('snippet_comments').insert({
       snippet_id: snippetId,
       author_id: State.user.id,
       content: text,
     });
     sendBtn.disabled = false;
-    sendBtn.textContent = 'Send';
     if (!error) {
-      await loadSnippetComments(snippetId, panel.querySelector('#snip-comments-list'));
-      // Increment count in DB atomically, then reflect in UI
-      const { data: snipRow } = await sb
-        .from('snippets')
-        .select('comments_count')
-        .eq('id', snippetId)
-        .single();
+      await loadSnippetComments(snippetId, commentList);
+      const { data: snipRow } = await sb.from('snippets').select('comments_count').eq('id', snippetId).single();
       const newCount = (snipRow?.comments_count || 0) + 1;
       await sb.from('snippets').update({ comments_count: newCount }).eq('id', snippetId);
       const countEl = card?.querySelector('.snip-comment-count');
       if (countEl) countEl.textContent = fmtNum(newCount);
     } else {
       console.error('[Devit] snippet comment insert error:', error);
-      input.value = text; // restore input so user doesn't lose their comment
+      optimistic.remove();
+      input.value = text;
       toast('Failed to post comment — ' + (error.message || 'check console'), 'circle-exclamation');
     }
   };
