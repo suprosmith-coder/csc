@@ -227,6 +227,10 @@
         <i class="fa-solid fa-film"></i>
         <span class="bnav-label">Snippets</span>
       </button>
+      <button class="bnav-btn" data-nav="explore" aria-label="Explore">
+        <i class="fa-solid fa-compass"></i>
+        <span class="bnav-label">Explore</span>
+      </button>
       <button class="bnav-btn" data-nav="links" aria-label="Links">
         <i class="fa-solid fa-users"></i>
         <span class="bnav-label">Links</span>
@@ -285,8 +289,9 @@
   </script>
 
   <script src="app.js"></script>
-<script src="devit-features.patch.js"></script>  <!-- ← add this -->
+<script src="devit-features.patch.js"></script>
 <script src="devit-features.patch(1).js"></script>
+<script src="devit-fixes.patch.js"></script>
  <script>
     // Modal close
     document.getElementById('modal-close-btn').addEventListener('click', () => {

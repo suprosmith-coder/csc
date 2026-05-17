@@ -95,10 +95,20 @@ function avatarHtml(profile, size = 36, cls = '') {
   if (!profile) return `<div class="profile-avatar-circle" style="width:${size}px;height:${size}px;font-size:${size*0.4}px;background:#444;${cls ? '' : ''}">?</div>`;
   const name = profile.display_name || profile.username || 'U';
   const color = avatarColor(name);
-  if (profile.avatar_url) {
-    return `<img src="${profile.avatar_url}" class="profile-avatar-circle${cls ? ' '+cls:''}" style="width:${size}px;height:${size}px;object-fit:cover" onerror="this.outerHTML='<div class=\\'profile-avatar-circle\\' style=\\'width:${size}px;height:${size}px;font-size:${size*0.4}px;background:${color}\\'>'+\`${avatarInitials(name)}\`+'</div>'">`;
+  const badgeSize = Math.max(14, Math.round(size * 0.38));
+  const iconSize  = Math.max(8, Math.round(size * 0.22));
+  const ghBadge   = profile.is_github
+    ? `<div class="avatar-gh-badge" style="position:absolute;bottom:-2px;right:-2px;width:${badgeSize}px;height:${badgeSize}px;background:#24292e;border-radius:50%;border:2px solid var(--bg-surface,#10121a);display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:1;"><i class="fa-brands fa-github" style="color:#fff;font-size:${iconSize}px;line-height:1"></i></div>`
+    : '';
+  function wrap(inner) {
+    return profile.is_github
+      ? `<div style="position:relative;display:inline-flex;flex-shrink:0;">${inner}${ghBadge}</div>`
+      : inner;
   }
-  return `<div class="profile-avatar-circle${cls ? ' '+cls:''}" style="width:${size}px;height:${size}px;font-size:${size*0.4}px;background:${color}">${avatarInitials(name)}</div>`;
+  if (profile.avatar_url) {
+    return wrap(`<img src="${profile.avatar_url}" class="profile-avatar-circle${cls ? ' '+cls:''}" style="width:${size}px;height:${size}px;object-fit:cover;flex-shrink:0;" onerror="this.outerHTML='<div class=\\'profile-avatar-circle\\' style=\\'width:${size}px;height:${size}px;font-size:${size*0.4}px;background:${color}\\'>'+\`${avatarInitials(name)}\`+'</div>'">`);
+  }
+  return wrap(`<div class="profile-avatar-circle${cls ? ' '+cls:''}" style="width:${size}px;height:${size}px;font-size:${size*0.4}px;background:${color};flex-shrink:0;">${avatarInitials(name)}</div>`);
 }
 
 /* ── SQL Bootstrap (run once) ───────────────────────────────── */
@@ -928,6 +938,8 @@ async function ensureProfile(authUser) {
     // (Fix ported from Cyanix AI — original only handled GitHub.)
     const meta = authUser.user_metadata || {};
     const email = authUser.email || '';
+    const provider = authUser.app_metadata?.provider || '';
+    const isGitHub = provider === 'github';
     let baseUsername = (meta.user_name || meta.preferred_username || email.split('@')[0] || 'user_' + Date.now()).toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 30);
     const display_name = meta.full_name || meta.name || baseUsername;
     const avatar_url = meta.avatar_url || meta.picture || null; // GitHub || Google
@@ -951,6 +963,7 @@ async function ensureProfile(authUser) {
           followers_count: 0,
           following_count: 0,
           posts_count: 0,
+          is_github: isGitHub,
         }, { onConflict: 'id' })
         .select()
         .single();
@@ -1988,6 +2001,7 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
       <div class="post-meta">
         <div class="post-author">
           <span class="pfp-clickable" data-uid="${profile?.id || ''}" style="cursor:pointer">${profile?.display_name || profile?.username || 'Unknown'}</span>
+          ${profile?.is_github ? `<span style="display:inline-flex;align-items:center;gap:3px;background:#24292e;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;line-height:1.4;"><i class="fa-brands fa-github" style="font-size:10px;"></i></span>` : ''}
           <span class="post-author-handle">@${profile?.username || '?'}</span>
         </div>
         <div class="post-time">${timeAgo(post.created_at)}</div>
@@ -2875,41 +2889,87 @@ async function openDM(convoId, otherUserId, container) {
   // Mark unread as read
   await sb.from('messages').update({ read: true }).eq('conversation_id', convoId).neq('sender_id', State.user.id);
 
-  // Subscribe to new messages in this convo
-  const sub = sb
-    .channel(`dm_${convoId}`)
+  // ── Supabase Realtime broadcast channel for instant DMs ──
+  const realtimeCh = sb.channel(`dm_realtime_${convoId}`, {
+    config: { broadcast: { self: false } },
+  });
+
+  realtimeCh
+    .on('broadcast', { event: 'new_message' }, ({ payload }) => {
+      const msg = payload;
+      if (!msg || msg.sender_id === State.user.id) return;
+      const listEl = document.getElementById('active-dm-messages');
+      if (!listEl) return;
+      listEl.appendChild(buildDMMessage(msg, other, color));
+      listEl.scrollTop = listEl.scrollHeight;
+      // Mark as read instantly since the chat is open
+      sb.from('messages').update({ read: true }).eq('id', msg.id);
+    })
+    .subscribe();
+
+  State.realtimeSubs.push(realtimeCh);
+
+  // Also keep a postgres_changes sub as fallback (for messages sent from other devices)
+  const pgSub = sb
+    .channel(`dm_pg_${convoId}`)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${convoId}` }, payload => {
       const msg = payload.new;
       if (msg.sender_id === State.user.id) return;
-      msgList.appendChild(buildDMMessage(msg, other, color));
-      msgList.scrollTop = msgList.scrollHeight;
+      const listEl = document.getElementById('active-dm-messages');
+      if (!listEl) return;
+      // Avoid duplicate if realtime broadcast already added it
+      if (listEl.querySelector(`[data-msgid="${msg.id}"]`)) return;
+      listEl.appendChild(buildDMMessage(msg, other, color));
+      listEl.scrollTop = listEl.scrollHeight;
     })
     .subscribe();
-  State.realtimeSubs.push(sub);
+  State.realtimeSubs.push(pgSub);
 
   // Send
   async function sendDM() {
-    const input = $('#dm-input', container);
-    const text = input.value.trim();
+    const inputEl = document.getElementById('dm-input');
+    if (!inputEl) return;
+    const text = inputEl.value.trim();
     if (!text) return;
-    input.value = '';
+    inputEl.value = '';
 
-    const { data: msg } = await sb.from('messages').insert({
+    const now = new Date().toISOString();
+    const { data: msg, error } = await sb.from('messages').insert({
       conversation_id: convoId,
       sender_id: State.user.id,
-      content: text
+      content: text,
     }).select().single();
 
+    if (error) {
+      toast('Failed to send message', 'circle-exclamation');
+      inputEl.value = text; // restore
+      return;
+    }
+
     if (msg) {
-      msgList.appendChild(buildDMMessage(msg, other, color, true));
-      msgList.scrollTop = msgList.scrollHeight;
+      const listEl = document.getElementById('active-dm-messages');
+      if (listEl) {
+        const msgEl = buildDMMessage(msg, other, color, true);
+        msgEl.dataset.msgid = msg.id;
+        listEl.appendChild(msgEl);
+        listEl.scrollTop = listEl.scrollHeight;
+      }
+      // Broadcast to the other participant via realtime
+      await realtimeCh.send({
+        type: 'broadcast',
+        event: 'new_message',
+        payload: { ...msg },
+      });
       // Update convo preview
       await sb.from('conversations').update({ last_message: text, last_message_at: msg.created_at }).eq('id', convoId);
     }
   }
 
-  $('#dm-send-btn', container).addEventListener('click', sendDM);
-  $('#dm-input', container).addEventListener('keydown', e => { if (e.key === 'Enter') sendDM(); });
+  const sendBtn = document.getElementById('dm-send-btn');
+  const dmInputEl = document.getElementById('dm-input');
+
+  if (sendBtn) sendBtn.addEventListener('click', (e) => { e.preventDefault(); sendDM(); });
+  if (dmInputEl) dmInputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDM(); } });
 
   // Mobile back button
   const backBtn = $('#dm-back-btn', container);
@@ -3028,7 +3088,7 @@ async function renderProfile(main, userId = null) {
           <button class="profile-action-btn secondary" id="share-profile-btn"><i class="fa-solid fa-link"></i></button>
         </div>
       </div>
-      <div class="profile-name">${safeName}</div>
+      <div class="profile-name" style="display:flex;align-items:center;gap:8px;">${safeName}${profile.is_github ? '<span style="display:inline-flex;align-items:center;gap:4px;background:#24292e;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:999px;letter-spacing:0.01em;"><i class=\"fa-brands fa-github\" style=\"font-size:12px;\"></i>GitHub</span>' : ''}</div>
       <div class="profile-handle">@${safeHandle} ${State.onlineUsers.has(targetId) ? '<span style="color:var(--emerald);font-size:12px">● Online</span>' : ''}</div>
       <div class="profile-bio">${safeBio}</div>
       <div class="profile-meta">
@@ -3526,12 +3586,12 @@ function buildSnippetCard(snippet) {
         <span class="snip-heart-count" style="color:#fff;font-size:12px;font-weight:700">${fmtNum(snippet.hearts_count || 0)}</span>
       </div>
 
-      <!-- Comment (visual only for now) -->
+      <!-- Comment -->
       <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
-        <button class="snip-comment-btn" style="background:none;border:none;color:#fff;font-size:26px;cursor:pointer;padding:6px">
+        <button class="snip-comment-btn" data-sid="${snippet.id}" style="background:none;border:none;color:#fff;font-size:26px;cursor:pointer;padding:6px">
           <i class="fa-solid fa-comment-dots"></i>
         </button>
-        <span style="color:#fff;font-size:12px;font-weight:700">${fmtNum(snippet.comments_count || 0)}</span>
+        <span class="snip-comment-count" style="color:#fff;font-size:12px;font-weight:700">${fmtNum(snippet.comments_count || 0)}</span>
       </div>
 
       <!-- Bookmark -->
@@ -3553,6 +3613,7 @@ function buildSnippetCard(snippet) {
     <div style="position:absolute;left:0;right:72px;bottom:16px;z-index:4;padding:0 16px">
       <div class="snip-author-info" data-uid="${snippet.profiles?.id || ''}" style="display:flex;align-items:center;gap:8px;margin-bottom:8px;cursor:pointer">
         <div style="font-size:14px;font-weight:700;color:#fff">@${username}</div>
+        ${snippet.profiles?.is_github ? `<span style="display:inline-flex;align-items:center;gap:3px;background:#24292e;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:999px;line-height:1.5;"><i class="fa-brands fa-github" style="font-size:11px;"></i> GitHub</span>` : ''}
       </div>
       ${snippet.caption ? `
         <div style="font-size:13px;color:rgba(255,255,255,0.9);line-height:1.5;
@@ -3709,7 +3770,147 @@ function buildSnippetCard(snippet) {
     }
   });
 
+  // Comment — open sliding panel
+  card.querySelector('.snip-comment-btn').addEventListener('click', e => {
+    e.stopPropagation();
+    openSnippetComments(snippet.id, card);
+  });
+
+  // Disable long-press context menu / download on the video
+  const vid = card.querySelector('.snip-video');
+  if (vid) {
+    vid.addEventListener('contextmenu', e => e.preventDefault());
+    vid.addEventListener('touchstart', e => { vid._lpTimer = setTimeout(() => e.preventDefault(), 400); }, { passive: false });
+    vid.addEventListener('touchend', () => clearTimeout(vid._lpTimer));
+    vid.addEventListener('touchmove', () => clearTimeout(vid._lpTimer));
+    vid.setAttribute('controlsList', 'nodownload');
+    vid.setAttribute('disablePictureInPicture', '');
+  }
+
   return card;
+}
+
+/* ── Snippet Comments Panel ──────────────────────────────────── */
+async function openSnippetComments(snippetId, card) {
+  // Remove any existing panel
+  document.getElementById('snip-comments-panel')?.remove();
+  document.getElementById('snip-comments-overlay')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'snip-comments-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:300;background:rgba(0,0,0,0.5);';
+  document.body.appendChild(overlay);
+
+  const panel = document.createElement('div');
+  panel.id = 'snip-comments-panel';
+  panel.style.cssText = `
+    position:fixed;bottom:0;left:0;right:0;z-index:301;
+    background:var(--bg-surface,#10121a);
+    border-radius:24px 24px 0 0;
+    border-top:1px solid rgba(255,255,255,0.08);
+    max-height:70vh;display:flex;flex-direction:column;
+    animation:slideUpPanel 0.3s cubic-bezier(0.16,1,0.3,1) forwards;
+  `;
+
+  if (!document.getElementById('snip-panel-anim')) {
+    const s = document.createElement('style');
+    s.id = 'snip-panel-anim';
+    s.textContent = `
+      @keyframes slideUpPanel { from{transform:translateY(100%)} to{transform:translateY(0)} }
+    `;
+    document.head.appendChild(s);
+  }
+
+  panel.innerHTML = `
+    <div style="padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-size:14px;font-weight:700;color:var(--text-primary)">Comments</div>
+      <button id="snip-comments-close" style="color:var(--text-muted);font-size:18px;background:none;border:none;cursor:pointer;"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div id="snip-comments-list" style="flex:1;overflow-y:auto;padding:8px 0;min-height:120px;">
+      <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">Loading…</div>
+    </div>
+    <div style="padding:10px 12px;border-top:1px solid rgba(255,255,255,0.06);display:flex;gap:8px;align-items:center;">
+      ${avatarHtml(State.profile, 32)}
+      <input id="snip-comment-input" style="flex:1;background:var(--bg-elevated,#181c27);border:1px solid rgba(255,255,255,0.08);border-radius:999px;padding:9px 14px;color:var(--text-primary);font-size:13px;outline:none;font-family:inherit;" placeholder="Add a comment…">
+      <button id="snip-comment-send" style="background:var(--cyan,#63d9ff);color:#050508;border:none;border-radius:999px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;">Send</button>
+    </div>
+  `;
+  document.body.appendChild(panel);
+
+  const close = () => {
+    panel.style.transform = 'translateY(100%)';
+    panel.style.transition = '0.25s ease';
+    setTimeout(() => { panel.remove(); overlay.remove(); }, 250);
+  };
+  overlay.addEventListener('click', close);
+  panel.querySelector('#snip-comments-close').addEventListener('click', close);
+
+  // Load comments
+  await loadSnippetComments(snippetId, panel.querySelector('#snip-comments-list'));
+
+  // Send
+  const input = panel.querySelector('#snip-comment-input');
+  const sendBtn = panel.querySelector('#snip-comment-send');
+  const doSend = async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    const { error } = await sb.from('snippet_comments').insert({
+      snippet_id: snippetId,
+      author_id: State.user.id,
+      content: text,
+    });
+    if (!error) {
+      await loadSnippetComments(snippetId, panel.querySelector('#snip-comments-list'));
+      // Update count on the card button
+      const countEl = card?.querySelector('.snip-comment-count');
+      if (countEl) {
+        const cur = parseInt(countEl.textContent.replace('K','000')) || 0;
+        countEl.textContent = fmtNum(cur + 1);
+      }
+      // Increment in DB
+      await sb.from('snippets').update({ comments_count: (parseInt(card?.querySelector('.snip-comment-count')?.textContent)||0) }).eq('id', snippetId);
+    } else {
+      toast('Failed to post comment', 'circle-exclamation');
+    }
+  };
+  sendBtn.addEventListener('click', doSend);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') doSend(); });
+}
+
+async function loadSnippetComments(snippetId, container) {
+  if (!container) return;
+  const { data: comments } = await sb
+    .from('snippet_comments')
+    .select('id, content, created_at, profiles!snippet_comments_author_id_fkey(id, username, display_name, avatar_url, is_github)')
+    .eq('snippet_id', snippetId)
+    .order('created_at', { ascending: true })
+    .limit(50);
+
+  if (!comments?.length) {
+    container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">No comments yet — be the first!</div>`;
+    return;
+  }
+
+  container.innerHTML = '';
+  comments.forEach(c => {
+    const p = c.profiles;
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex;gap:10px;padding:10px 16px;align-items:flex-start;';
+    div.innerHTML = `
+      ${avatarHtml(p, 32)}
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <span style="font-size:13px;font-weight:700;color:var(--text-primary);">${escapeHtml(p?.display_name || p?.username || 'User')}</span>
+          ${p?.is_github ? `<span style="display:inline-flex;align-items:center;gap:3px;background:#24292e;color:#fff;font-size:9px;font-weight:700;padding:2px 5px;border-radius:999px;"><i class="fa-brands fa-github" style="font-size:9px;"></i></span>` : ''}
+          <span style="font-size:11px;color:var(--text-muted);">${timeAgo(c.created_at)}</span>
+        </div>
+        <div style="font-size:13px;color:var(--text-secondary);margin-top:2px;line-height:1.4;">${escapeHtml(c.content)}</div>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+  container.scrollTop = container.scrollHeight;
 }
 
 function openSnippetUploadModal() {
@@ -3841,7 +4042,11 @@ function renderLinks(main) {
   main.innerHTML = `
     <div class="view-tabs">
       <div class="view-tab active" data-ltab="my-links">My Links</div>
-      <div class="view-tab" data-ltab="requests">Requests</div>
+      <div class="view-tab" data-ltab="requests">Requests <span id="req-badge" style="display:none;background:var(--rose);color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;margin-left:4px;"></span></div>
+    </div>
+    <div style="padding:10px 16px 4px;font-size:12px;color:var(--text-muted);line-height:1.5;">
+      <b style="color:var(--text-secondary);">My Links</b> = people who've linked back with you &nbsp;·&nbsp;
+      <b style="color:var(--text-secondary);">Requests</b> = people trying to link with you (accept to become Links)
     </div>
     <div id="links-content">
       <div style="padding:32px;text-align:center;color:var(--text-muted)">Loading…</div>
@@ -3856,6 +4061,15 @@ function renderLinks(main) {
       else loadLinkRequests($('#links-content'));
     });
   });
+
+  // Show request badge count
+  (async () => {
+    const { count } = await sb.from('links').select('*', { count: 'exact', head: true }).eq('target_id', State.user.id).eq('status', 'pending');
+    if (count > 0) {
+      const badge = main.querySelector('#req-badge');
+      if (badge) { badge.style.display = 'inline'; badge.textContent = count; }
+    }
+  })();
 
   loadMyLinks($('#links-content'));
 }
@@ -3943,7 +4157,7 @@ async function loadLinkRequests(container) {
           <div style="font-size:12px;color:var(--text-muted)">@${escapeHtml(p.username || '')} wants to link with you</div>
         </div>
         <div style="display:flex;gap:6px">
-          <button class="accept-link-btn profile-action-btn primary" data-lid="${req.id}" style="padding:6px 12px;font-size:12px">Accept</button>
+          <button class="accept-link-btn profile-action-btn primary" data-lid="${req.id}" data-rid="${p.id}" style="padding:6px 12px;font-size:12px">Accept</button>
           <button class="decline-link-btn profile-action-btn secondary" data-lid="${req.id}" style="padding:6px 12px;font-size:12px">Decline</button>
         </div>
       </div>`;
@@ -3952,9 +4166,38 @@ async function loadLinkRequests(container) {
 
   container.querySelectorAll('.accept-link-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
-      await sb.from('links').update({ status: 'accepted' }).eq('id', btn.dataset.lid);
-      toast('Link accepted!', 'link');
+      btn.disabled = true;
+      btn.textContent = '…';
+      const lid = btn.dataset.lid;
+      const rid = btn.dataset.rid; // requester id
+
+      // Accept the incoming request
+      await sb.from('links').update({ status: 'accepted' }).eq('id', lid);
+
+      // Create a reciprocal link back (you -> them), so both sides are linked
+      if (rid) {
+        await sb.from('links').upsert({
+          requester_id: State.user.id,
+          target_id: rid,
+          status: 'accepted',
+        }, { onConflict: 'requester_id,target_id' });
+        // Notify them that you accepted
+        await sb.from('notifications').insert({
+          user_id: rid,
+          actor_id: State.user.id,
+          type: 'link_accepted',
+        });
+      }
+
+      toast('Link accepted! You are now linked.', 'link');
       loadLinkRequests(container);
+      // Update badge
+      const badge = document.querySelector('#req-badge');
+      if (badge) {
+        const cur = parseInt(badge.textContent) || 0;
+        if (cur <= 1) badge.style.display = 'none';
+        else badge.textContent = cur - 1;
+      }
     });
   });
   container.querySelectorAll('.decline-link-btn').forEach(btn => {
@@ -4801,6 +5044,8 @@ async function handleGitHubProfileAutofill(session) {
       update.tech_stack = [...new Set([...existing, ...topRepos])].slice(0, 12);
     }
     if (ghUser.name && !State?.profile?.display_name) update.display_name = ghUser.name;
+    // Always mark as GitHub user so the badge shows throughout the app
+    update.is_github = true;
 
     if (Object.keys(update).length === 0) return;
 
@@ -5538,3 +5783,34 @@ $$;
 `);
 
 console.log('[Devit Features Patch v2] ✓ Loaded: GitHub autofill, Polls, Digest widget, Read time/Views, Pinned posts + Soft UI');
+
+/* ══════════════════════════════════════════════════════════════
+   DEVIT FIXES — SQL additions (run in Supabase Dashboard)
+   ══════════════════════════════════════════════════════════════ */
+console.log(`
+/* ── Run these in Supabase Dashboard > SQL Editor ── */
+
+-- GitHub flag on profiles
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_github boolean DEFAULT false;
+
+-- Snippet comments table
+CREATE TABLE IF NOT EXISTS snippet_comments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  snippet_id uuid REFERENCES snippets(id) ON DELETE CASCADE NOT NULL,
+  author_id uuid REFERENCES profiles(id) ON DELETE CASCADE NOT NULL,
+  content text NOT NULL,
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE snippet_comments ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Public snippet comments" ON snippet_comments FOR SELECT USING (true);
+CREATE POLICY "Auth snippet comment" ON snippet_comments FOR INSERT WITH CHECK (auth.uid() = author_id);
+CREATE POLICY "Own snippet comment delete" ON snippet_comments FOR DELETE USING (auth.uid() = author_id);
+
+-- Enable realtime for snippet_comments
+ALTER PUBLICATION supabase_realtime ADD TABLE snippet_comments;
+
+-- Mutual link upsert policy (requester_id, target_id unique constraint)
+ALTER TABLE links ADD CONSTRAINT IF NOT EXISTS links_requester_target_unique UNIQUE (requester_id, target_id);
+
+-- Add link_accepted to notification types (no schema change needed, type is text)
+`);
