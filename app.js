@@ -54,67 +54,6 @@ const timeAgo = ts => {
   if (s < 86400) return Math.floor(s / 3600) + 'h ago';
   return Math.floor(s / 86400) + 'd ago';
 };
-/* ── Micro-feature: Like particles ──────────────────────────── */
-function spawnLikeParticles(btn) {
-  const rect = btn.getBoundingClientRect();
-  const cx = rect.left + rect.width / 2;
-  const cy = rect.top + rect.height / 2;
-  const colors = ['#fb7185','#f97316','#fbbf24','#f472b6','#ff6b6b'];
-  for (let i = 0; i < 7; i++) {
-    const dot = document.createElement('div');
-    const angle = (Math.PI * 2 / 7) * i - Math.PI / 2;
-    const dist = 28 + Math.random() * 18;
-    const dx = Math.cos(angle) * dist;
-    const dy = Math.sin(angle) * dist;
-    dot.style.cssText = `
-      position:fixed;pointer-events:none;z-index:9999;
-      width:5px;height:5px;border-radius:50%;
-      background:${colors[i % colors.length]};
-      left:${cx}px;top:${cy}px;
-      transform:translate(-50%,-50%);
-      animation:likeParticle 0.55s ease-out forwards;
-      --dx:${dx}px;--dy:${dy}px;
-    `;
-    document.body.appendChild(dot);
-    setTimeout(() => dot.remove(), 600);
-  }
-}
-
-/* ── Micro-feature: Full datetime tooltip on timeAgo ─────────── */
-function fmtFullDate(ts) {
-  return new Date(ts).toLocaleString(undefined, {
-    weekday: 'short', year: 'numeric', month: 'short',
-    day: 'numeric', hour: '2-digit', minute: '2-digit'
-  });
-}
-
-/* ── Micro-feature: Auto-grow textarea ───────────────────────── */
-function autoGrow(textarea) {
-  textarea.style.height = 'auto';
-  textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
-}
-
-/* ── Micro-feature: Composer char ring ───────────────────────── */
-function updateCharRing(left, total = 280) {
-  const ring = document.getElementById('char-ring');
-  if (!ring) return;
-  const pct = Math.max(0, left) / total;
-  const r = 10, c = 2 * Math.PI * r;
-  const dash = pct * c;
-  const color = left < 0 ? '#fb7185' : left < 20 ? '#fb7185' : left < 60 ? '#fbbf24' : '#63d9ff';
-  ring.innerHTML = `
-    <svg width="26" height="26" viewBox="0 0 26 26" style="transform:rotate(-90deg)">
-      <circle cx="13" cy="13" r="${r}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2.5"/>
-      <circle cx="13" cy="13" r="${r}" fill="none" stroke="${color}" stroke-width="2.5"
-        stroke-dasharray="${dash} ${c}" stroke-linecap="round"
-        style="transition:stroke-dasharray 0.15s,stroke 0.2s"/>
-    </svg>
-    ${left < 30 ? `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;color:${color};font-family:var(--font-mono)">${left}</span>` : ''}
-  `;
-  ring.style.position = 'relative';
-  ring.style.display = 'inline-flex';
-}
-
 const avatarColor = str => {
   let h = 0;
   for (let i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
@@ -1076,8 +1015,300 @@ async function buildApp() {
   initGlobalNotifSub();
   loadUnreadCounts();
   registerServiceWorker();
+  // Handle invite code from URL (if user arrived via an invite link)
+  handleInviteOnLoad();
   // Delay push prompt slightly so it doesn't interrupt first load
   setTimeout(() => registerPushNotifications(), 3000);
+}
+
+/* ── Invite Link System ─────────────────────────────────────── */
+
+const INVITE_EDGE_URL = `${window.DEVIT_CONFIG.SUPABASE_URL}/functions/v1/invite`;
+const SITE_URL = window.DEVIT_CONFIG.SITE_URL;
+
+/** Generate a DEVIT-XXXXXX style code */
+function generateInviteCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I,O,0,1 (ambiguous)
+  let code = 'DEVIT-';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
+}
+
+/**
+ * Get or create a permanent invite link for the current user.
+ * Re-uses existing codes — one per user, stored in invite_links.
+ */
+async function getOrCreateInviteCode() {
+  // Check for existing code
+  const { data: existing } = await sb
+    .from('invite_links')
+    .select('code')
+    .eq('inviter_id', State.user.id)
+    .limit(1)
+    .single();
+
+  if (existing?.code) return existing.code;
+
+  // Create a new one (retry on collision)
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const code = generateInviteCode();
+    const { data, error } = await sb
+      .from('invite_links')
+      .insert({ code, inviter_id: State.user.id })
+      .select('code')
+      .single();
+    if (!error && data) return data.code;
+    // 23505 = unique_violation — code already taken, retry
+    if (error?.code !== '23505') {
+      console.error('[Devit] Failed to create invite link:', error);
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Build the shareable invite URL that routes through the Edge Function.
+ * Format: https://<project>.supabase.co/functions/v1/invite?code=DEVIT-XXXXXX
+ */
+function buildInviteUrl(code) {
+  return `${INVITE_EDGE_URL}?code=${encodeURIComponent(code)}`;
+}
+
+/**
+ * Called on app boot — checks if the current URL has ?invite=CODE.
+ * If so, records the usage and shows a welcome modal to the new user.
+ */
+async function handleInviteOnLoad() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('invite');
+  if (!code) return;
+
+  // Clean the invite param from the URL immediately (don't leave it in history)
+  try {
+    const clean = new URL(window.location.href);
+    clean.searchParams.delete('invite');
+    history.replaceState(null, '', clean.pathname + (clean.search !== '?' ? clean.search : ''));
+  } catch (_) {}
+
+  // Record usage via RPC (server-side atomic increment)
+  const { data: valid } = await sb.rpc('use_invite', { invite_code: code });
+
+  if (!valid) {
+    // Expired or non-existent — show a quiet toast, don't make a big deal
+    toast('Invite link expired or invalid', 'circle-exclamation');
+    return;
+  }
+
+  // Save code to profile so we can track attribution
+  await sb
+    .from('profiles')
+    .update({ invited_by_code: code })
+    .eq('id', State.user.id);
+
+  // Fetch the inviter profile to show in the welcome card
+  const { data: invite } = await sb
+    .from('invite_links')
+    .select('inviter_id, profiles(id, username, display_name, avatar_url, bio)')
+    .eq('code', code)
+    .single();
+
+  if (!invite) return;
+  showInviteWelcomeModal(invite.profiles);
+}
+
+/**
+ * Show a branded welcome modal when a user arrives via an invite link.
+ */
+function showInviteWelcomeModal(inviter) {
+  const modal = $('#modal-overlay');
+  const body  = $('#modal-body');
+  if (!modal || !body) return;
+
+  $('#modal-title-text').textContent = 'Welcome to Devit!';
+  modal.classList.add('open');
+
+  body.innerHTML = `
+    <div style="padding:24px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px">
+
+      <!-- Devit logo -->
+      <img src="devit.png" alt="Devit" style="width:52px;height:52px;border-radius:14px;border:1px solid rgba(99,217,255,0.2);background:rgba(99,217,255,0.08);padding:6px;object-fit:contain;">
+
+      <!-- Inviter avatar -->
+      <div style="position:relative">
+        ${avatarHtml(inviter, 68)}
+        <div style="position:absolute;bottom:-4px;right:-4px;width:22px;height:22px;background:var(--emerald);border-radius:50%;border:2px solid var(--bg-surface);display:flex;align-items:center;justify-content:center;">
+          <i class="fa-solid fa-check" style="font-size:10px;color:#050508"></i>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:18px;font-weight:800;font-family:var(--font-display);margin-bottom:4px">
+          ${escapeHtml(inviter?.display_name || inviter?.username || 'A developer')} invited you
+        </div>
+        <div style="font-size:13px;color:var(--cyan)">@${escapeHtml(inviter?.username || '')}</div>
+      </div>
+
+      <p style="font-size:13px;color:var(--text-secondary);line-height:1.6;max-width:280px">
+        You're joining Devit — the social platform built for developers.<br>
+        Code. Connect. Ship.
+      </p>
+
+      <div style="display:flex;flex-direction:column;gap:8px;width:100%;max-width:280px">
+        <button id="invite-welcome-profile" class="auth-btn-primary" style="width:100%;padding:12px">
+          <i class="fa-solid fa-user-plus"></i> View @${escapeHtml(inviter?.username || '')}'s profile
+        </button>
+        <button id="invite-welcome-dismiss" class="auth-btn-magic" style="width:100%;padding:12px">
+          Explore Devit
+        </button>
+      </div>
+    </div>
+  `;
+
+  $('#invite-welcome-profile').addEventListener('click', () => {
+    modal.classList.remove('open');
+    if (inviter?.id) renderProfile($('#main'), inviter.id);
+  });
+  $('#invite-welcome-dismiss').addEventListener('click', () => {
+    modal.classList.remove('open');
+  });
+}
+
+/**
+ * Open the share invite modal — called from the profile share button.
+ */
+async function openShareInviteModal(profile) {
+  const modal = $('#modal-overlay');
+  const body  = $('#modal-body');
+  if (!modal || !body) return;
+
+  $('#modal-title-text').textContent = 'Invite to Devit';
+  modal.classList.add('open');
+
+  // Loading state
+  body.innerHTML = `
+    <div style="padding:32px;text-align:center;color:var(--text-muted)">
+      <i class="fa-solid fa-spinner fa-spin" style="font-size:20px;color:var(--cyan)"></i>
+      <div style="margin-top:10px;font-size:13px">Generating invite link…</div>
+    </div>
+  `;
+
+  const code = await getOrCreateInviteCode();
+
+  if (!code) {
+    body.innerHTML = `<div style="padding:32px;text-align:center;color:var(--rose)">Failed to generate invite link. Try again.</div>`;
+    return;
+  }
+
+  const inviteUrl = buildInviteUrl(code);
+
+  body.innerHTML = `
+    <div style="padding:20px;display:flex;flex-direction:column;gap:16px">
+
+      <!-- Preview card -->
+      <div style="
+        background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-md);
+        overflow:hidden;
+      ">
+        <!-- OG image strip -->
+        <div style="
+          height:72px;
+          background:linear-gradient(135deg, rgba(99,217,255,0.15), rgba(167,139,250,0.15));
+          display:flex;align-items:center;justify-content:center;border-bottom:1px solid var(--border);
+          gap:12px;padding:0 16px;
+        ">
+          <img src="devit.png" alt="Devit" style="width:28px;height:28px;border-radius:6px;object-fit:contain;">
+          <div style="font-size:11px;font-weight:600;color:var(--text-muted);letter-spacing:0.08em;text-transform:uppercase">Devit · Code. Connect. Ship.</div>
+        </div>
+
+        <!-- Inviter info -->
+        <div style="padding:14px 16px;display:flex;align-items:center;gap:12px">
+          ${avatarHtml(profile, 44)}
+          <div style="flex:1;min-width:0">
+            <div style="font-size:14px;font-weight:700">${escapeHtml(profile?.display_name || profile?.username || 'You')} invited you to Devit</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Join the developer social platform</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Invite code display -->
+      <div style="
+        display:flex;align-items:center;justify-content:space-between;
+        background:var(--bg-elevated);border:1px solid var(--border-active);border-radius:var(--radius-md);
+        padding:10px 14px;
+      ">
+        <div>
+          <div style="font-size:10px;color:var(--text-muted);letter-spacing:0.06em;text-transform:uppercase;margin-bottom:2px">Invite code</div>
+          <div style="font-size:16px;font-weight:800;font-family:var(--font-mono);color:var(--cyan);letter-spacing:0.08em">${escapeHtml(code)}</div>
+        </div>
+        <button id="copy-code-btn" style="
+          background:var(--bg-float);border:1px solid var(--border);border-radius:var(--radius-sm);
+          color:var(--text-secondary);padding:6px 10px;font-size:12px;font-weight:600;
+          transition:all 0.15s;
+        ">Copy code</button>
+      </div>
+
+      <!-- Full URL display -->
+      <div style="
+        background:var(--bg-void);border:1px solid var(--border);border-radius:var(--radius-sm);
+        padding:8px 12px;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);
+        word-break:break-all;line-height:1.5;
+      ">${escapeHtml(inviteUrl)}</div>
+
+      <!-- Action buttons -->
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button id="share-invite-copy" class="auth-btn-primary" style="width:100%;padding:12px">
+          <i class="fa-solid fa-link"></i> Copy invite link
+        </button>
+        <button id="share-invite-native" class="auth-btn-magic" style="width:100%;padding:12px;display:${navigator.share ? 'block' : 'none'}">
+          <i class="fa-solid fa-share-nodes"></i> Share via…
+        </button>
+      </div>
+
+      <!-- Fine print -->
+      <div style="font-size:11px;color:var(--text-muted);text-align:center;line-height:1.5">
+        Link is permanent · No expiry · Unlimited uses
+      </div>
+    </div>
+  `;
+
+  // Copy full link
+  $('#share-invite-copy').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      const btn = $('#share-invite-copy');
+      btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied!';
+      setTimeout(() => { btn.innerHTML = '<i class="fa-solid fa-link"></i> Copy invite link'; }, 2000);
+      toast('Invite link copied!', 'link');
+    } catch (_) {
+      toast('Could not copy — try manually', 'circle-exclamation');
+    }
+  });
+
+  // Copy code only
+  $('#copy-code-btn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      const btn = $('#copy-code-btn');
+      btn.textContent = 'Copied!';
+      btn.style.color = 'var(--emerald)';
+      setTimeout(() => { btn.textContent = 'Copy code'; btn.style.color = ''; }, 2000);
+    } catch (_) {}
+  });
+
+  // Native share sheet (mobile)
+  const nativeBtn = $('#share-invite-native');
+  if (nativeBtn) {
+    nativeBtn.addEventListener('click', async () => {
+      try {
+        await navigator.share({
+          title: `Join me on Devit!`,
+          text: `${profile?.display_name || profile?.username || 'A dev'} invited you to Devit — Code. Connect. Ship.`,
+          url: inviteUrl,
+        });
+      } catch (_) {} // user dismissed — no-op
+    });
+  }
 }
 
 function initGlobalNotifSub() {
@@ -1357,35 +1588,28 @@ function closeSearch() {
 /* ── Sidebar ────────────────────────────────────────────────── */
 function buildSidebar() {
   const sb_el = $('#sidebar');
-  const primaryLinks = [
-    { id: 'feed',          icon: '<i class="fa-solid fa-house"></i>',        label: 'Workspace' },
+  const links = [
+    { id: 'feed',          icon: '<i class="fa-solid fa-house"></i>',        label: 'Activity' },
     { id: 'explore',       icon: '<i class="fa-solid fa-compass"></i>',       label: 'Discover' },
-    { id: 'snippets',      icon: '<i class="fa-solid fa-code"></i>',          label: 'Snippets' },
-    { id: 'links',         icon: '<i class="fa-solid fa-users"></i>',         label: 'Collab', badge: 0 },
-    { id: 'notifications', icon: '<i class="fa-solid fa-bell"></i>',          label: 'Inbox', badge: State.unreadNotifs },
+    { id: 'snippets',      icon: '<i class="fa-solid fa-film"></i>',          label: 'Snippets' },
+    { id: 'links',         icon: '<i class="fa-solid fa-users"></i>',         label: 'Links', badge: 0 },
+    { id: 'notifications', icon: '<i class="fa-solid fa-bell"></i>',          label: 'Alerts', badge: State.unreadNotifs },
     { id: 'messages',      icon: '<i class="fa-solid fa-message"></i>',       label: 'DMs', badge: State.unreadMessages },
-  ];
-  const secondaryLinks = [
-    { id: 'profile',       icon: '<i class="fa-solid fa-user"></i>',          label: 'My Work' },
+    { id: 'profile',       icon: '<i class="fa-solid fa-user"></i>',          label: 'Profile' },
     { id: 'bookmarks',     icon: '<i class="fa-solid fa-bookmark"></i>',      label: 'Saved' },
     { id: 'settings',      icon: '<i class="fa-solid fa-gear"></i>',          label: 'Settings' },
   ];
-  const renderLinks = (arr) => arr.map(l => `
-    <div class="sidebar-link${l.id === State.currentView ? ' active' : ''}" data-nav="${l.id}">
+
+  let html = `<div class="sidebar-section-label">Workspace</div>`;
+  links.forEach(l => {
+    html += `<div class="sidebar-link${l.id === State.currentView ? ' active' : ''}" data-nav="${l.id}">
       <span class="icon">${l.icon}</span>
       <span>${l.label}</span>
       ${l.badge ? `<span class="badge-count">${l.badge}</span>` : ''}
-    </div>`).join('');
+    </div>`;
+  });
 
-  let html = `
-    <div class="sidebar-section-label">Main</div>
-    ${renderLinks(primaryLinks)}
-    <div class="sidebar-divider"></div>
-    <div class="sidebar-section-label">You</div>
-    ${renderLinks(secondaryLinks)}
-    <div class="sidebar-divider"></div>
-  `;
-  html += `
+  html += `<div class="sidebar-divider"></div>
   <div class="sidebar-communities-header">
     <span>Channels</span>
     <button id="create-community-btn" title="Create channel"><i class="fa-solid fa-plus"></i></button>
@@ -1858,8 +2082,7 @@ function buildComposer(container) {
         <input type="file" id="composer-img-input" accept="image/*" style="display:none">
         <input type="file" id="composer-file-input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.js,.ts,.py,.html,.css,.json,.zip,.rar,.7z,.mp3,.wav,.ogg,.mp4,.mov,.webm" style="display:none">
         <div class="composer-actions">
-          <div id="char-ring" style="width:26px;height:26px;flex-shrink:0"></div>
-          <span class="char-count" id="char-count" style="display:none">280</span>
+          <span class="char-count" id="char-count">280</span>
           <button class="post-btn" id="post-submit-btn" disabled>Post</button>
         </div>
       </div>
@@ -1883,15 +2106,10 @@ function buildComposer(container) {
 
   const canPost = () => textarea.value.trim().length > 0 || selectedImageFile || selectedAttachFile;
 
-  // Init ring
-  updateCharRing(280);
-
   textarea.addEventListener('input', () => {
     const left = 280 - textarea.value.length;
     charCount.textContent = left;
     charCount.style.color = left < 20 ? 'var(--rose)' : left < 60 ? 'var(--amber)' : 'var(--text-muted)';
-    updateCharRing(left);
-    autoGrow(textarea);
     submitBtn.disabled = !canPost();
   });
 
@@ -2078,7 +2296,7 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
           ${profile?.is_github ? `<span style="display:inline-flex;align-items:center;gap:3px;background:#24292e;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:999px;line-height:1.4;"><i class="fa-brands fa-github" style="font-size:10px;"></i></span>` : ''}
           <span class="post-author-handle">@${profile?.username || '?'}</span>
         </div>
-        <div class="post-time" title="${fmtFullDate(post.created_at)}">${timeAgo(post.created_at)}</div>
+        <div class="post-time">${timeAgo(post.created_at)}</div>
       </div>
       ${post.author_id === State.user.id
         ? `<button class="post-delete-btn" data-pid="${post.id}" title="Delete post" style="margin-left:auto;color:var(--text-muted);font-size:14px;padding:4px 8px;border-radius:6px;transition:color 0.15s"><i class="fa-solid fa-xmark"></i></button>`
@@ -2116,11 +2334,7 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
     likeBtn.classList.toggle('liked', likedState);
     svg.setAttribute('fill', likedState ? 'currentColor' : 'none');
     countEl.textContent = fmtNum(likedState ? currentCount + 1 : currentCount - 1);
-    if (likedState) {
-      likeBtn.style.transform = 'scale(1.3)';
-      setTimeout(() => likeBtn.style.transform = '', 200);
-      spawnLikeParticles(likeBtn);
-    }
+    if (likedState) { likeBtn.style.transform = 'scale(1.3)'; setTimeout(() => likeBtn.style.transform = '', 200); }
 
     if (likedState) {
       await sb.from('post_likes').insert({ post_id: post.id, user_id: State.user.id });
@@ -3046,49 +3260,8 @@ async function openDM(convoId, otherUserId, container) {
   const sendBtn = document.getElementById('dm-send-btn');
   const dmInputEl = document.getElementById('dm-input');
 
-  // ── Typing indicator ──────────────────────────────────────────
-  let _typingTimer = null;
-  let _typingIndicatorEl = null;
-
-  function showTypingIndicator() {
-    if (_typingIndicatorEl) return;
-    const listEl = document.getElementById('active-dm-messages');
-    if (!listEl) return;
-    _typingIndicatorEl = document.createElement('div');
-    _typingIndicatorEl.className = 'dm-typing-indicator';
-    _typingIndicatorEl.innerHTML = `
-      <div class="msg-avatar" style="background:${color};width:28px;height:28px;font-size:11px;flex-shrink:0">${avatarInitials(other?.display_name || other?.username || '?')}</div>
-      <div class="typing-bubble"><span></span><span></span><span></span></div>
-    `;
-    listEl.appendChild(_typingIndicatorEl);
-    listEl.scrollTop = listEl.scrollHeight;
-  }
-  function hideTypingIndicator() {
-    _typingIndicatorEl?.remove();
-    _typingIndicatorEl = null;
-  }
-
-  // Listen for typing events from the other user
-  realtimeCh.on('broadcast', { event: 'typing' }, ({ payload }) => {
-    if (payload?.sender === State.user.id) return;
-    showTypingIndicator();
-    clearTimeout(_typingTimer);
-    _typingTimer = setTimeout(hideTypingIndicator, 2200);
-  });
-
-  // Broadcast typing when user types
-  let _myTypingTimer = null;
-  if (dmInputEl) {
-    dmInputEl.addEventListener('input', () => {
-      clearTimeout(_myTypingTimer);
-      _myTypingTimer = setTimeout(() => {
-        realtimeCh.send({ type: 'broadcast', event: 'typing', payload: { sender: State.user.id } });
-      }, 120);
-    });
-  }
-
-  if (sendBtn) sendBtn.addEventListener('click', (e) => { e.preventDefault(); hideTypingIndicator(); sendDM(); });
-  if (dmInputEl) dmInputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); hideTypingIndicator(); sendDM(); } });
+  if (sendBtn) sendBtn.addEventListener('click', (e) => { e.preventDefault(); sendDM(); });
+  if (dmInputEl) dmInputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDM(); } });
 
   // Mobile back button
   const backBtn = $('#dm-back-btn', container);
@@ -3282,11 +3455,11 @@ async function renderProfile(main, userId = null) {
     });
   }
 
-  // Share profile button
+  // Share profile button → opens invite modal
   const shareProfileBtn = $('#share-profile-btn', main);
   if (shareProfileBtn) {
     shareProfileBtn.addEventListener('click', () => {
-      navigator.clipboard?.writeText(window.location.href).then(() => toast('Link copied!', 'link'));
+      openShareInviteModal(profile);
     });
   }
 
@@ -3973,41 +4146,24 @@ async function openSnippetComments(snippetId, card) {
   const doSend = async () => {
     const text = input.value.trim();
     if (!text) return;
-    if (!State.user) { toast('Sign in to comment', 'circle-exclamation'); return; }
     input.value = '';
-    sendBtn.disabled = true;
-
-    // ── Optimistic: show comment immediately ──────────────────
-    const commentList = panel.querySelector('#snip-comments-list');
-    const optimistic = document.createElement('div');
-    optimistic.style.cssText = 'display:flex;gap:10px;padding:10px 16px;align-items:flex-start;opacity:0.6;animation:fadeIn 0.2s ease';
-    optimistic.innerHTML = `
-      ${avatarHtml(State.profile, 30)}
-      <div>
-        <div style="font-size:13px;font-weight:600">${escapeHtml(State.profile?.display_name || State.profile?.username || 'You')}</div>
-        <div style="font-size:13px;margin-top:2px;color:var(--text-primary)">${escapeHtml(text)}</div>
-      </div>`;
-    commentList?.appendChild(optimistic);
-    commentList && (commentList.scrollTop = commentList.scrollHeight);
-
     const { error } = await sb.from('snippet_comments').insert({
       snippet_id: snippetId,
       author_id: State.user.id,
       content: text,
     });
-    sendBtn.disabled = false;
     if (!error) {
-      await loadSnippetComments(snippetId, commentList);
-      const { data: snipRow } = await sb.from('snippets').select('comments_count').eq('id', snippetId).single();
-      const newCount = (snipRow?.comments_count || 0) + 1;
-      await sb.from('snippets').update({ comments_count: newCount }).eq('id', snippetId);
+      await loadSnippetComments(snippetId, panel.querySelector('#snip-comments-list'));
+      // Update count on the card button
       const countEl = card?.querySelector('.snip-comment-count');
-      if (countEl) countEl.textContent = fmtNum(newCount);
+      if (countEl) {
+        const cur = parseInt(countEl.textContent.replace('K','000')) || 0;
+        countEl.textContent = fmtNum(cur + 1);
+      }
+      // Increment in DB
+      await sb.from('snippets').update({ comments_count: (parseInt(card?.querySelector('.snip-comment-count')?.textContent)||0) }).eq('id', snippetId);
     } else {
-      console.error('[Devit] snippet comment insert error:', error);
-      optimistic.remove();
-      input.value = text;
-      toast('Failed to post comment — ' + (error.message || 'check console'), 'circle-exclamation');
+      toast('Failed to post comment', 'circle-exclamation');
     }
   };
   sendBtn.addEventListener('click', doSend);
@@ -4016,18 +4172,12 @@ async function openSnippetComments(snippetId, card) {
 
 async function loadSnippetComments(snippetId, container) {
   if (!container) return;
-  const { data: comments, error: fetchErr } = await sb
+  const { data: comments } = await sb
     .from('snippet_comments')
-    .select('id, content, created_at, author_id, profiles(id, username, display_name, avatar_url, is_github)')
+    .select('id, content, created_at, profiles!snippet_comments_author_id_fkey(id, username, display_name, avatar_url, is_github)')
     .eq('snippet_id', snippetId)
     .order('created_at', { ascending: true })
     .limit(50);
-
-  if (fetchErr) {
-    console.error('[Devit] loadSnippetComments error:', fetchErr);
-    container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--rose);font-size:13px;">Could not load comments</div>`;
-    return;
-  }
 
   if (!comments?.length) {
     container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">No comments yet — be the first!</div>`;
