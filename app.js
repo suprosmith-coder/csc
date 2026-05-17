@@ -1296,28 +1296,39 @@ function closeSearch() {
 /* ── Sidebar ────────────────────────────────────────────────── */
 function buildSidebar() {
   const sb_el = $('#sidebar');
-  const links = [
-    { id: 'feed',          icon: '<i class="fa-solid fa-house"></i>',        label: 'Activity' },
+
+  const primaryLinks = [
+    { id: 'feed',          icon: '<i class="fa-solid fa-house"></i>',        label: 'Workspace' },
     { id: 'explore',       icon: '<i class="fa-solid fa-compass"></i>',       label: 'Discover' },
-    { id: 'snippets',      icon: '<i class="fa-solid fa-film"></i>',          label: 'Snippets' },
-    { id: 'links',         icon: '<i class="fa-solid fa-users"></i>',         label: 'Links', badge: 0 },
-    { id: 'notifications', icon: '<i class="fa-solid fa-bell"></i>',          label: 'Alerts', badge: State.unreadNotifs },
+    { id: 'snippets',      icon: '<i class="fa-solid fa-code"></i>',          label: 'Snippets' },
+    { id: 'links',         icon: '<i class="fa-solid fa-users"></i>',         label: 'Collab', badge: 0 },
+    { id: 'notifications', icon: '<i class="fa-solid fa-bell"></i>',          label: 'Inbox', badge: State.unreadNotifs },
     { id: 'messages',      icon: '<i class="fa-solid fa-message"></i>',       label: 'DMs', badge: State.unreadMessages },
-    { id: 'profile',       icon: '<i class="fa-solid fa-user"></i>',          label: 'Profile' },
+  ];
+
+  const secondaryLinks = [
+    { id: 'profile',       icon: '<i class="fa-solid fa-user"></i>',          label: 'My Work' },
     { id: 'bookmarks',     icon: '<i class="fa-solid fa-bookmark"></i>',      label: 'Saved' },
     { id: 'settings',      icon: '<i class="fa-solid fa-gear"></i>',          label: 'Settings' },
   ];
 
-  let html = `<div class="sidebar-section-label">Workspace</div>`;
-  links.forEach(l => {
-    html += `<div class="sidebar-link${l.id === State.currentView ? ' active' : ''}" data-nav="${l.id}">
+  const renderLinks = (arr) => arr.map(l => `
+    <div class="sidebar-link${l.id === State.currentView ? ' active' : ''}" data-nav="${l.id}">
       <span class="icon">${l.icon}</span>
       <span>${l.label}</span>
       ${l.badge ? `<span class="badge-count">${l.badge}</span>` : ''}
-    </div>`;
-  });
+    </div>`).join('');
 
-  html += `<div class="sidebar-divider"></div>
+  let html = `
+    <div class="sidebar-section-label">Main</div>
+    ${renderLinks(primaryLinks)}
+    <div class="sidebar-divider"></div>
+    <div class="sidebar-section-label">You</div>
+    ${renderLinks(secondaryLinks)}
+    <div class="sidebar-divider"></div>
+  `;
+
+  html += `
   <div class="sidebar-communities-header">
     <span>Channels</span>
     <button id="create-community-btn" title="Create channel"><i class="fa-solid fa-plus"></i></button>
@@ -3854,24 +3865,33 @@ async function openSnippetComments(snippetId, card) {
   const doSend = async () => {
     const text = input.value.trim();
     if (!text) return;
+    if (!State.user) { toast('Sign in to comment', 'circle-exclamation'); return; }
+    sendBtn.disabled = true;
+    sendBtn.textContent = '…';
     input.value = '';
     const { error } = await sb.from('snippet_comments').insert({
       snippet_id: snippetId,
       author_id: State.user.id,
       content: text,
     });
+    sendBtn.disabled = false;
+    sendBtn.textContent = 'Send';
     if (!error) {
       await loadSnippetComments(snippetId, panel.querySelector('#snip-comments-list'));
-      // Update count on the card button
+      // Increment count in DB atomically, then reflect in UI
+      const { data: snipRow } = await sb
+        .from('snippets')
+        .select('comments_count')
+        .eq('id', snippetId)
+        .single();
+      const newCount = (snipRow?.comments_count || 0) + 1;
+      await sb.from('snippets').update({ comments_count: newCount }).eq('id', snippetId);
       const countEl = card?.querySelector('.snip-comment-count');
-      if (countEl) {
-        const cur = parseInt(countEl.textContent.replace('K','000')) || 0;
-        countEl.textContent = fmtNum(cur + 1);
-      }
-      // Increment in DB
-      await sb.from('snippets').update({ comments_count: (parseInt(card?.querySelector('.snip-comment-count')?.textContent)||0) }).eq('id', snippetId);
+      if (countEl) countEl.textContent = fmtNum(newCount);
     } else {
-      toast('Failed to post comment', 'circle-exclamation');
+      console.error('[Devit] snippet comment insert error:', error);
+      input.value = text; // restore input so user doesn't lose their comment
+      toast('Failed to post comment — ' + (error.message || 'check console'), 'circle-exclamation');
     }
   };
   sendBtn.addEventListener('click', doSend);
@@ -3880,12 +3900,18 @@ async function openSnippetComments(snippetId, card) {
 
 async function loadSnippetComments(snippetId, container) {
   if (!container) return;
-  const { data: comments } = await sb
+  const { data: comments, error: fetchErr } = await sb
     .from('snippet_comments')
-    .select('id, content, created_at, profiles!snippet_comments_author_id_fkey(id, username, display_name, avatar_url, is_github)')
+    .select('id, content, created_at, author_id, profiles(id, username, display_name, avatar_url, is_github)')
     .eq('snippet_id', snippetId)
     .order('created_at', { ascending: true })
     .limit(50);
+
+  if (fetchErr) {
+    console.error('[Devit] loadSnippetComments error:', fetchErr);
+    container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--rose);font-size:13px;">Could not load comments</div>`;
+    return;
+  }
 
   if (!comments?.length) {
     container.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;">No comments yet — be the first!</div>`;
