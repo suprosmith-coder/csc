@@ -57,19 +57,44 @@ async function ghFetch(path, token) {
 
 /* ── Public username from profile ────────────────────────────── */
 function getGHUsername(profile) {
-  // Stored when user signs in via GitHub OAuth
-  return profile?.github_username || GHCache.username || profile?.username || null;
+  // Always derive the username from the profile being viewed.
+  // NEVER fall back to GHCache.username here — that belongs to the
+  // signed-in user and would leak their repos onto other people's profiles.
+  return profile?.github_username || profile?.username || null;
 }
 
-/* ── Fetch all repos (public API — no token needed for public) ── */
+/* ── Own GitHub username (signed-in user only) ───────────────── */
+function getOwnGHUsername() {
+  return GHCache.username || window.State?.profile?.github_username || window.State?.profile?.username || null;
+}
+
+/* ── Fetch repos for a specific username ─────────────────────── */
+// token is only used when username matches the signed-in user,
+// so we never accidentally serve the authed user's private repos
+// on someone else's profile page.
 async function fetchGHRepos(username, token) {
+  if (!username) return [];
+
+  // Only use the authenticated endpoint when viewing your OWN profile
+  const ownUsername = getOwnGHUsername();
+  const isOwnProfile = ownUsername && ownUsername.toLowerCase() === username.toLowerCase();
+
+  // Cache hit — keyed by username so different profiles don't share cache
   if (GHCache.repos && GHCache.repos._for === username) return GHCache.repos;
-  const data = token
-    ? await ghFetch(`/user/repos?sort=updated&per_page=30&type=owner`, token)
-    : await ghFetch(`/users/${encodeURIComponent(username)}/repos?sort=updated&per_page=30`, null);
+
+  let data;
+  if (isOwnProfile && token) {
+    // Authenticated: can see private repos too
+    data = await ghFetch(`/user/repos?sort=updated&per_page=30&type=owner`, token);
+  } else {
+    // Public API — only public repos, no token sent
+    data = await ghFetch(`/users/${encodeURIComponent(username)}/repos?sort=updated&per_page=30`, null);
+  }
+
   const repos = Array.isArray(data) ? data : [];
   repos._for = username;
-  GHCache.repos = repos;
+  // Only cache if it's the own profile (other profiles shouldn't poison the cache)
+  if (isOwnProfile) GHCache.repos = repos;
   return repos;
 }
 
@@ -648,8 +673,8 @@ async function openRepoPicker() {
   modal.classList.add('open');
   body.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted)"><i class="fa-solid fa-spinner fa-spin" style="font-size:22px"></i></div>`;
 
-  const token   = await getGHToken();
-  const username = getGHUsername(window.State?.profile);
+  const token    = await getGHToken();
+  const username = getOwnGHUsername(); // composer always posts from the signed-in user
   const repos    = await fetchGHRepos(username, token).catch(() => []);
 
   if (!repos.length) {
