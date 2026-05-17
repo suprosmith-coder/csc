@@ -1021,6 +1021,8 @@ async function buildApp() {
   registerServiceWorker();
   handleInviteOnLoad();
   setTimeout(() => registerPushNotifications(), 3000);
+  // Enable swipe left/right to switch tabs on mobile
+  setTimeout(() => initMainSwipeNavigation(), 500);
 }
 
 /* ── Invite Link System ─────────────────────────────────────── */
@@ -1865,6 +1867,49 @@ function updateBottomNavActive(view) {
   });
 }
 
+/* ── Tab Swipe Navigation (mobile) ─────────────────────────── */
+// Ordered list of views that swipe left/right cycles through
+const NAV_SWIPE_ORDER = ['feed', 'snippets', 'explore', 'links', 'notifications', 'profile'];
+
+function initMainSwipeNavigation() {
+  const mainEl = document.getElementById('main');
+  if (!mainEl || !('ontouchstart' in window)) return;
+
+  let sx = 0, sy = 0, sTime = 0;
+
+  mainEl.addEventListener('touchstart', e => {
+    sx = e.touches[0].clientX;
+    sy = e.touches[0].clientY;
+    sTime = Date.now();
+  }, { passive: true });
+
+  mainEl.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - sx;
+    const dy = e.changedTouches[0].clientY - sy;
+    const dt = Date.now() - sTime;
+
+    // Must be fast enough, wide enough, and more horizontal than vertical
+    if (dt > 600 || Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx) * 0.75) return;
+
+    // Don't swipe when inside scroll containers (messages, DMs etc.)
+    const target = e.target;
+    if (target.closest('.dm-messages, .channel-messages-list, #chat-messages-list, .messages-layout')) return;
+
+    const curIdx = NAV_SWIPE_ORDER.indexOf(State.currentView);
+    if (curIdx === -1) return;
+
+    if (dx < 0) {
+      // Swipe left → next tab
+      const nextIdx = (curIdx + 1) % NAV_SWIPE_ORDER.length;
+      navigateTo(NAV_SWIPE_ORDER[nextIdx]);
+    } else {
+      // Swipe right → previous tab
+      const prevIdx = (curIdx - 1 + NAV_SWIPE_ORDER.length) % NAV_SWIPE_ORDER.length;
+      navigateTo(NAV_SWIPE_ORDER[prevIdx]);
+    }
+  }, { passive: true });
+}
+
 /* ── Pull-to-Refresh ────────────────────────────────────────── */
 function initPullToRefresh(container, onRefresh) {
   // Only on touch devices
@@ -1967,7 +2012,7 @@ async function loadPosts(container) {
   let query = sb
     .from('posts')
     .select(`
-      id, content, code_block, code_lang, image_url, file_url, file_name, likes_count, comments_count, reposts_count, created_at,
+      id, content, code_block, code_lang, image_url, file_url, file_name, likes_count, comments_count, reposts_count, created_at, poll,
       profiles!posts_author_id_fkey(id, username, display_name, avatar_url)
     `)
     .order('created_at', { ascending: false })
@@ -2239,7 +2284,18 @@ function buildComposer(container) {
       postData.code_lang  = codeLang;
     }
 
-    const { error } = await sb.from('posts').insert(postData);
+    // Attach poll if active
+    if (typeof PollState !== 'undefined' && PollState.active) {
+      const pollData = (typeof getPollData === 'function') ? getPollData() : null;
+      if (pollData) {
+        postData.poll = pollData;
+      } else if (PollState.active) {
+        toast('Add at least 2 poll options', 'circle-exclamation');
+        submitBtn.disabled = false; submitBtn.textContent = 'Post'; return;
+      }
+    }
+
+    const { data: newPost, error } = await sb.from('posts').insert(postData).select().single();
     if (error) {
       toast('Failed to post: ' + error.message, 'circle-exclamation');
     } else {
@@ -2258,6 +2314,31 @@ function buildComposer(container) {
       preview.style.display = 'none';
       preview.innerHTML = '';
       toast('Posted!', 'paper-plane');
+
+      // Reset poll state
+      if (typeof PollState !== 'undefined') {
+        PollState.active = false;
+        PollState.options = ['', ''];
+        document.getElementById('poll-builder-ui')?.remove();
+        const pollBtn = document.getElementById('poll-toggle-btn');
+        if (pollBtn) { pollBtn.style.color = ''; pollBtn.style.background = ''; }
+      }
+
+      // Notify all followers about the new post (fire and forget)
+      if (newPost?.id) {
+        const postSnippet = (text || '').slice(0, 100) || 'New post';
+        sb.from('follows').select('follower_id').eq('following_id', State.user.id).then(({ data: followers }) => {
+          if (!followers?.length) return;
+          const notifications = followers.map(f => ({
+            user_id: f.follower_id,
+            actor_id: State.user.id,
+            type: 'new_post',
+            post_id: newPost.id,
+            post_title: postSnippet,
+          }));
+          sb.from('notifications').insert(notifications).then(() => {});
+        });
+      }
     }
     submitBtn.disabled = false;
     submitBtn.textContent = 'Post';
@@ -2287,6 +2368,11 @@ function buildPostCard(post, profile, isLiked = false, isBookmarked = false) {
   }
   if (post.code_block) {
     contentHtml += `<pre class="post-code"><span class="post-code-lang">${post.code_lang || ''}</span>${escapeHtml(post.code_block)}</pre>`;
+  }
+  // Render poll if present
+  if (post.poll && post.poll.options?.length) {
+    const currentUserId = State.user?.id || '';
+    contentHtml += renderPollInPost(post.poll, post.id, currentUserId);
   }
 
   card.innerHTML = `
@@ -2991,10 +3077,10 @@ async function loadNotifications() {
 
   const { data: notifs } = await sb
     .from('notifications')
-    .select('id, type, read, created_at, post_id, profiles!notifications_actor_id_fkey(id, username, display_name, avatar_url)')
+    .select('id, type, read, created_at, post_id, post_title, profiles!notifications_actor_id_fkey(id, username, display_name, avatar_url)')
     .eq('user_id', State.user.id)
     .order('created_at', { ascending: false })
-    .limit(30);
+    .limit(40);
 
   if (!notifs?.length) {
     container.innerHTML = `<div style="padding:40px;text-align:center;color:var(--text-muted)">No notifications yet 🔕</div>`;
@@ -3002,38 +3088,56 @@ async function loadNotifications() {
   }
 
   const iconMap = {
-    like:    '<i class="fa-solid fa-heart"></i>',
-    follow:  '<i class="fa-solid fa-user-plus"></i>',
-    comment: '<i class="fa-solid fa-comment"></i>',
-    mention: '<i class="fa-solid fa-at"></i>',
-    reply:   '<i class="fa-solid fa-reply"></i>'
+    like:         '<i class="fa-solid fa-heart" style="color:var(--rose)"></i>',
+    follow:       '<i class="fa-solid fa-user-plus" style="color:var(--violet)"></i>',
+    comment:      '<i class="fa-solid fa-comment" style="color:var(--sky)"></i>',
+    mention:      '<i class="fa-solid fa-at" style="color:var(--cyan)"></i>',
+    reply:        '<i class="fa-solid fa-reply" style="color:var(--emerald)"></i>',
+    link_request: '<i class="fa-solid fa-link" style="color:var(--amber)"></i>',
+    link_accepted:'<i class="fa-solid fa-handshake" style="color:var(--emerald)"></i>',
+    new_post:     '<i class="fa-solid fa-pen-to-square" style="color:var(--cyan)"></i>',
   };
   const textMap = {
-    like:    actor => `<strong>${actor}</strong> liked your post`,
-    follow:  actor => `<strong>${actor}</strong> started following you`,
-    comment: actor => `<strong>${actor}</strong> commented on your post`,
-    mention: actor => `<strong>${actor}</strong> mentioned you`,
-    reply:   actor => `<strong>${actor}</strong> replied to your comment`,
+    like:         actor => `<strong>${actor}</strong> liked your post`,
+    follow:       actor => `<strong>${actor}</strong> started following you`,
+    comment:      actor => `<strong>${actor}</strong> commented on your post`,
+    mention:      actor => `<strong>${actor}</strong> mentioned you in a post`,
+    reply:        actor => `<strong>${actor}</strong> replied to your comment`,
+    link_request: actor => `<strong>${actor}</strong> wants to link with you`,
+    link_accepted:actor => `<strong>${actor}</strong> accepted your link request`,
+    new_post:     actor => `<strong>${actor}</strong> published a new post`,
   };
 
   container.innerHTML = notifs.map(n => {
     const actor = n.profiles?.display_name || n.profiles?.username || 'Someone';
     const color = avatarColor(actor);
-    return `<div class="notif-item ${n.read ? '' : 'unread'}" data-nid="${n.id}" data-post-id="${n.post_id || ''}">
+    const icon  = iconMap[n.type] || '<i class="fa-solid fa-bell"></i>';
+    const text  = (textMap[n.type] || (() => 'New notification'))(escapeHtml(actor));
+    // Show post snippet if available
+    const postPreview = n.post_title
+      ? `<div style="margin-top:4px;padding:6px 10px;background:var(--bg-elevated);border-radius:8px;font-size:12px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">${escapeHtml(n.post_title)}</div>`
+      : '';
+
+    return `<div class="notif-item ${n.read ? '' : 'unread'}" data-nid="${n.id}" data-post-id="${n.post_id || ''}" data-actor-id="${n.profiles?.id || ''}" style="display:flex;align-items:flex-start;gap:12px;padding:14px 16px;cursor:pointer;border-bottom:1px solid var(--border);transition:background 0.15s">
       <div style="position:relative;flex-shrink:0">
-        <div class="notif-avatar" style="background:${color}">${avatarInitials(actor)}</div>
-        <div class="notif-icon notif-${n.type}">${iconMap[n.type] || '<i class="fa-solid fa-bell"></i>'}</div>
+        <div class="notif-avatar" style="background:${color};width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff;">${avatarInitials(actor)}</div>
+        <div class="notif-icon notif-${n.type}" style="position:absolute;bottom:-2px;right:-2px;width:18px;height:18px;border-radius:50%;background:var(--bg-float);border:2px solid var(--bg-surface);display:flex;align-items:center;justify-content:center;font-size:8px;">${icon}</div>
       </div>
       <div style="flex:1;min-width:0">
-        <div class="notif-text">${(textMap[n.type] || (() => 'New notification'))(actor)}</div>
-        <div class="notif-time">${timeAgo(n.created_at)}</div>
+        <div class="notif-text" style="font-size:13px;line-height:1.5;color:var(--text-secondary)">${text}</div>
+        ${postPreview}
+        <div class="notif-time" style="font-size:11px;color:var(--text-muted);margin-top:3px">${timeAgo(n.created_at)}</div>
       </div>
+      ${!n.read ? '<div style="width:8px;height:8px;border-radius:50%;background:var(--cyan);flex-shrink:0;margin-top:4px"></div>' : ''}
     </div>`;
   }).join('');
 
   $$('.notif-item', container).forEach(item => {
     item.addEventListener('click', async () => {
       item.classList.remove('unread');
+      // Remove the unread dot
+      const dot = item.querySelector('div[style*="background:var(--cyan)"]');
+      if (dot) dot.remove();
       await sb.from('notifications').update({ read: true }).eq('id', item.dataset.nid);
       State.unreadNotifs = Math.max(0, State.unreadNotifs - 1);
       updateBadges();
@@ -3041,8 +3145,18 @@ async function loadNotifications() {
       if (item.dataset.postId && item.dataset.postId !== 'null') {
         const { data: post } = await sb.from('posts').select('*, profiles!posts_author_id_fkey(id,username,display_name,avatar_url)').eq('id', item.dataset.postId).single();
         if (post) openPostThread(post, post.profiles);
+      } else if (item.dataset.actorId && item.dataset.actorId !== 'null') {
+        // For follows, link requests etc. — go to their profile
+        const notifType = item.querySelector('.notif-text')?.textContent;
+        if (notifType && (notifType.includes('following') || notifType.includes('link'))) {
+          renderProfile($('#main'), item.dataset.actorId);
+        }
       }
     });
+
+    // Hover effect
+    item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-elevated)'; });
+    item.addEventListener('mouseleave', () => { item.style.background = ''; });
   });
 }
 
@@ -4433,12 +4547,15 @@ function renderLinks(main) {
     </div>
   `;
 
+  // Tab switching
   $$('.view-tab[data-ltab]', main).forEach(tab => {
     tab.addEventListener('click', () => {
-      $$('.view-tab', main).forEach(t => t.classList.remove('active'));
+      $$('.view-tab[data-ltab]', main).forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
-      if (tab.dataset.ltab === 'my-links') loadMyLinks($('#links-content'));
-      else loadLinkRequests($('#links-content'));
+      const content = document.getElementById('links-content');
+      if (!content) return;
+      if (tab.dataset.ltab === 'my-links') loadMyLinks(content);
+      else loadLinkRequests(content);
     });
   });
 
@@ -4446,12 +4563,17 @@ function renderLinks(main) {
   (async () => {
     const { count } = await sb.from('links').select('*', { count: 'exact', head: true }).eq('target_id', State.user.id).eq('status', 'pending');
     if (count > 0) {
-      const badge = main.querySelector('#req-badge');
+      const badge = document.getElementById('req-badge');
       if (badge) { badge.style.display = 'inline'; badge.textContent = count; }
+      // Also update bottom nav badge
+      const bnavBadge = document.getElementById('bnav-badge-links');
+      if (bnavBadge) bnavBadge.classList.add('visible');
     }
   })();
 
-  loadMyLinks($('#links-content'));
+  // Load My Links by default — content div now exists
+  const content = document.getElementById('links-content');
+  if (content) loadMyLinks(content);
 }
 
 async function loadMyLinks(container) {
@@ -5559,10 +5681,17 @@ function renderPollBuilder() {
     PollState.durationDays = +e.target.value;
   });
 
-  // Inject after composer textarea
-  const composerInner = document.querySelector('.composer-inner, #composer-textarea, .composer');
-  if (composerInner) {
-    composerInner.parentElement.insertBefore(builder, composerInner.nextSibling);
+  // Inject after composer toolbar
+  const composerToolbar = document.querySelector('.composer-toolbar');
+  const composerInner   = document.querySelector('.composer-inner');
+  const composerEl      = composerToolbar?.parentElement || composerInner;
+  if (composerEl) {
+    // Insert after the toolbar if possible
+    if (composerToolbar) {
+      composerToolbar.insertAdjacentElement('afterend', builder);
+    } else {
+      composerEl.appendChild(builder);
+    }
   }
 }
 
@@ -5666,22 +5795,18 @@ document.addEventListener('click', async e => {
 
 // Inject poll toggle button into composer when it renders
 function injectPollButtonIntoComposer() {
-  const actionBar = document.querySelector('.composer-actions, .post-actions-bar, .composer-footer');
-  if (!actionBar || document.getElementById('poll-toggle-btn')) return;
+  // Target the composer toolbar specifically
+  const toolbar = document.querySelector('.composer-toolbar');
+  if (!toolbar || document.getElementById('poll-toggle-btn')) return;
 
   const pollBtn = document.createElement('button');
   pollBtn.id = 'poll-toggle-btn';
   pollBtn.title = 'Add a poll';
-  pollBtn.className = 'composer-action-btn';
+  pollBtn.className = 'composer-tool';
   pollBtn.innerHTML = '<i class="fa-solid fa-chart-bar"></i>';
-  pollBtn.style.cssText = `
-    color: var(--text-secondary);
-    padding: 6px 10px;
-    border-radius: 8px;
-    font-size: 14px;
-    transition: color 0.18s, background 0.18s;
-  `;
-  pollBtn.addEventListener('click', () => {
+  pollBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     PollState.active = !PollState.active;
     pollBtn.style.color = PollState.active ? 'var(--cyan)' : '';
     pollBtn.style.background = PollState.active ? 'var(--cyan-dim)' : '';
@@ -5692,7 +5817,14 @@ function injectPollButtonIntoComposer() {
       document.getElementById('poll-builder-ui')?.remove();
     }
   });
-  actionBar.prepend(pollBtn);
+
+  // Insert before the actions group
+  const actionsGroup = toolbar.querySelector('.composer-actions');
+  if (actionsGroup) {
+    toolbar.insertBefore(pollBtn, actionsGroup);
+  } else {
+    toolbar.appendChild(pollBtn);
+  }
 }
 
 // Watch for composer to appear
